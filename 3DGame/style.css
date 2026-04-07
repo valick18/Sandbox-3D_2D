@@ -1,0 +1,135 @@
+body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #87CEEB; /* default sky color */
+    font-family: sans-serif;
+}
+
+#ui {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10;
+}
+
+#crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-size: 24px;
+    font-weight: bold;
+    text-shadow: 1px 1px 0 #000;
+}
+
+#instructions {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background-color: rgba(0,0,0,0.8);
+    color: white;
+    pointer-events: auto; /* Allow click */
+    cursor: pointer;
+}
+
+#instructions h1 {
+    font-size: 40px;
+}
+
+#hotbar {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 4px;
+    pointer-events: auto;
+}
+
+.hotbar-slot {
+    width: 48px;
+    height: 48px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 2px solid #555;
+    border-radius: 4px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: white;
+    font-size: 14px;
+    position: relative;
+    cursor: pointer;
+}
+
+.hotbar-slot.active {
+    border-color: #fff;
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+}
+
+.hotbar-count {
+    position: absolute;
+    bottom: 2px;
+    right: 4px;
+    font-size: 10px;
+}
+
+#crafting {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 320px;
+    max-height: 80vh;
+    overflow-y: auto;
+    background: rgba(20, 20, 20, 0.9);
+    border: 2px solid #888;
+    padding: 20px;
+    border-radius: 8px;
+    pointer-events: auto;
+}
+
+#crafting h2 {
+    margin-top: 0;
+    border-bottom: 1px solid #555;
+    padding-bottom: 10px;
+    color: white;
+}
+
+#recipe-list button {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 5px;
+    background: #444;
+    color: white;
+    border: 1px solid #777;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+#recipe-list button:hover {
+    background: #666;
+}
+
+#recipe-list button[disabled] {
+    background: #222;
+    color: #666;
+    cursor: not-allowed;
+}
+
+.block-icon {
+    width: 24px;
+    height: 24px;
+    display: inline-block;
+    border: 1px solid #000;
+    image-rendering: pixelated;
+}

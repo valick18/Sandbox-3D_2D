@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Procedural 3D Sandbox</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.150.1/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.150.1/examples/jsm/"
+        }
+      }
+    </script>
+</head>
+<body>
+    <div id="ui">
+        <div id="crosshair">+</div>
+        <div id="instructions">
+            <h1>Procedural 3D Sandbox</h1>
+            <div id="menu-buttons" style="margin-top: 20px; text-align: center;">
+                <button id="btn-new-world" style="padding: 10px 20px; font-size: 18px; cursor: pointer;">New World</button>
+                <button id="btn-load-world" style="padding: 10px 20px; font-size: 18px; cursor: pointer; margin-left:10px;" disabled>Load World</button>
+            </div>
+            <p>Click screen to play (Generates World)</p>
+            <p>WASD to move, Space to jump</p>
+            <p>Left Click: Break | Right Click: Place</p>
+            <p>Press E to Craft</p>
+            <p id="menu-warning" style="color: yellow; display: none;">Generating, please wait...</p>
+        </div>
+        <div id="hotbar"></div>
+        <div id="crafting" style="display:none;">
+            <h2>Crafting</h2>
+            <div id="recipe-list"></div>
+        </div>
+    </div>
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
