@@ -11,10 +11,16 @@ let chunks = {};
 let velocity = new THREE.Vector3();
 let direction = new THREE.Vector3();
 let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false, canJump = false;
+let isSprinting = false;
+let flyMode = false;
+let lastSpaceTime = 0;
+const keys = {};
 let prevTime = performance.now();
+let raycaster, center;
+let craftingMode = 'none'; // 'none', 'basic', 'workbench', 'chest'
 
 // ----------------- INVENTORY & CRAFTING -----------------
-const BLOCK_NAMES = {1:'Grass', 2:'Dirt', 3:'Stone', 4:'Wood', 5:'Leaves', 6:'Sand', 7:'Planks', 8:'Meat'};
+const BLOCK_NAMES = {1:'Grass', 2:'Dirt', 3:'Stone', 4:'Wood', 5:'Leaves', 6:'Sand', 7:'Planks', 8:'Meat', 9:'Workbench', 10:'Chest'};
 
 class Inventory {
     constructor() {
@@ -25,7 +31,7 @@ class Inventory {
     }
     
     addItem(id, amount = 1) {
-        if(id === BLOCKS.AIR || id === BLOCKS.LEAVES) return; // avoid junk
+        if(id === BLOCKS.AIR) return; // ignore air
         if(id === BLOCKS.GRASS) id = BLOCKS.DIRT; // grass drops dirt
         
         let existing = this.slots.find(s => s && s.id === id);
@@ -86,25 +92,186 @@ function updateInventoryUI() {
         div.onclick = () => { inventory.activeSlot = i; updateInventoryUI(); };
         hotbar.appendChild(div);
     }
+    localStorage.setItem('sandbox3d_inventory', JSON.stringify(inventory.slots));
 }
 
 function updateCraftingUI() {
     const list = document.getElementById('recipe-list');
     list.innerHTML = '';
     
-    // Recipe: 1 Wood -> 4 Planks
-    let btn = document.createElement('button');
-    btn.innerHTML = `<span>Craft 4x <img src="${icons[BLOCKS.PLANKS]}" class="block-icon"></span> <span>Req: 1x <img src="${icons[BLOCKS.WOOD]}" class="block-icon"></span>`;
-    btn.disabled = inventory.countItem(BLOCKS.WOOD) < 1;
-    btn.onclick = () => {
-        if(inventory.removeItem(BLOCKS.WOOD, 1)) {
-            inventory.addItem(BLOCKS.PLANKS, 4);
-            updateInventoryUI();
-            updateCraftingUI();
-            playSound(400, 0.1);
-        }
+    // Helper to add recipes
+    const addRecipe = (outId, outCount, reqId, reqCount) => {
+        let btn = document.createElement('button');
+        btn.innerHTML = `<span>Craft ${outCount}x <img src="${icons[outId]}" class="block-icon"></span> <span>Req: ${reqCount}x <img src="${icons[reqId]}" class="block-icon"></span>`;
+        btn.disabled = inventory.countItem(reqId) < reqCount;
+        btn.onclick = () => {
+            if(inventory.removeItem(reqId, reqCount)) {
+                inventory.addItem(outId, outCount);
+                updateInventoryUI();
+                updateCraftingUI();
+                playSound(400, 0.1);
+            }
+        };
+        list.appendChild(btn);
     };
-    list.appendChild(btn);
+
+    // Basic Recipes (Available anywhere)
+    addRecipe(BLOCKS.PLANKS, 4, BLOCKS.WOOD, 1);
+    addRecipe(BLOCKS.WORKBENCH, 1, BLOCKS.PLANKS, 4);
+
+    // Advanced Recipes (Needs Workbench)
+    if (craftingMode === 'workbench') {
+        let hdr = document.createElement('div');
+        hdr.innerHTML = '<br><b>Workbench Recipes:</b><hr>';
+        hdr.style.color = '#fff';
+        list.appendChild(hdr);
+        
+        addRecipe(BLOCKS.CHEST, 1, BLOCKS.PLANKS, 8);
+    }
+}
+
+// ----------------- CHEST UI -----------------
+window.chests = {};
+let currentChestKey = null;
+
+function saveChests() {
+    localStorage.setItem('sandbox3d_chests', JSON.stringify(window.chests));
+}
+
+function dragDropItem(fromArray, fromIdx, toArray, toIdx) {
+    let fromItem = fromArray[fromIdx];
+    let toItem = toArray[toIdx];
+    if (!fromItem) return;
+    if (fromArray === toArray && fromIdx === toIdx) return;
+    
+    if (toItem && toItem.id === fromItem.id) {
+        toItem.count += fromItem.count;
+        fromArray[fromIdx] = null;
+    } else {
+        toArray[toIdx] = fromItem;
+        fromArray[fromIdx] = toItem;
+    }
+}
+
+function transferItem(fromArray, fromIdx, toArray) {
+    let item = fromArray[fromIdx];
+    if (!item) return false;
+    
+    // try to stack
+    let existing = toArray.find(s => s && s.id === item.id);
+    if (existing) {
+        existing.count += item.count;
+        fromArray[fromIdx] = null;
+        return true;
+    }
+    // find empty
+    let emptyIdx = toArray.findIndex(s => s === null);
+    if (emptyIdx !== -1) {
+        toArray[emptyIdx] = { ...item };
+        fromArray[fromIdx] = null;
+        return true;
+    }
+    return false; // no space
+}
+
+function openChest(x, y, z) {
+    let key = `${x},${y},${z}`;
+    if (!window.chests) window.chests = {};
+    if (!window.chests[key]) {
+        window.chests[key] = Array(18).fill(null); // 18 slots in chest
+    }
+    currentChestKey = key;
+    document.getElementById('ui-backdrop').style.display = 'block';
+    document.getElementById('chest-ui').style.display = 'block';
+    
+    // Use the existing instructions overlay logic!
+    document.getElementById('ui').style.pointerEvents = 'auto';
+
+    ControlsUnlockWait();
+    updateChestUI();
+}
+
+function ControlsUnlockWait() {
+    controls.isLocked = false; // instantly disable mouse look to prevent jump
+    controls.unlock();
+    if (document.pointerLockElement) document.exitPointerLock();
+}
+
+function updateChestUI() {
+    if (!currentChestKey) return;
+    let chestSlots = window.chests[currentChestKey];
+    
+    const cGrid = document.getElementById('chest-grid');
+    cGrid.innerHTML = '';
+    for(let i=0; i<18; i++) {
+        let div = document.createElement('div');
+        div.className = 'chest-slot';
+        let slot = chestSlots[i];
+        if (slot) {
+            div.title = BLOCK_NAMES[slot.id];
+            div.innerHTML = `<img src="${icons[slot.id]}" class="block-icon" draggable="false"><span class="hotbar-count">${slot.count}</span>`;
+            div.draggable = true;
+            div.ondragstart = (e) => {
+                e.dataTransfer.setData('text/plain', JSON.stringify({source: 'chest', index: i}));
+            };
+        }
+        div.ondragover = (e) => e.preventDefault();
+        div.ondrop = (e) => {
+            e.preventDefault();
+            try {
+                let data = JSON.parse(e.dataTransfer.getData('text/plain'));
+                let srcArray = data.source === 'chest' ? chestSlots : inventory.slots;
+                dragDropItem(srcArray, data.index, chestSlots, i);
+                updateChestUI();
+                updateInventoryUI();
+                saveChests();
+            } catch(err) {}
+        };
+        div.onclick = () => {
+            if (transferItem(chestSlots, i, inventory.slots)) {
+                updateChestUI();
+                updateInventoryUI();
+                saveChests();
+            }
+        };
+        cGrid.appendChild(div);
+    }
+    
+    const pGrid = document.getElementById('player-grid');
+    pGrid.innerHTML = '';
+    for(let i=0; i<9; i++) {
+        let div = document.createElement('div');
+        div.className = 'player-slot';
+        let slot = inventory.slots[i];
+        if (slot) {
+            div.title = BLOCK_NAMES[slot.id];
+            div.innerHTML = `<img src="${icons[slot.id]}" class="block-icon" draggable="false"><span class="hotbar-count">${slot.count}</span>`;
+            div.draggable = true;
+            div.ondragstart = (e) => {
+                e.dataTransfer.setData('text/plain', JSON.stringify({source: 'inventory', index: i}));
+            };
+        }
+        div.ondragover = (e) => e.preventDefault();
+        div.ondrop = (e) => {
+            e.preventDefault();
+            try {
+                let data = JSON.parse(e.dataTransfer.getData('text/plain'));
+                let srcArray = data.source === 'chest' ? chestSlots : inventory.slots;
+                dragDropItem(srcArray, data.index, inventory.slots, i);
+                updateChestUI();
+                updateInventoryUI();
+                saveChests();
+            } catch(err) {}
+        };
+        div.onclick = () => {
+            if (transferItem(inventory.slots, i, chestSlots)) {
+                updateChestUI();
+                updateInventoryUI();
+                saveChests();
+            }
+        };
+        pGrid.appendChild(div);
+    }
 }
 // ---------------------------------------------------------
 
@@ -127,6 +294,61 @@ function playSound(freq, duration) {
     osc.start();
     osc.stop(audioCtx.currentTime + duration);
 }
+
+function playLeafSound() {
+    if(audioCtx.state === 'suspended') audioCtx.resume();
+    // Noise burst filtered to sound like rustling leaves
+    let bufLen = audioCtx.sampleRate * 0.18;
+    let buf = audioCtx.createBuffer(1, bufLen, audioCtx.sampleRate);
+    let data = buf.getChannelData(0);
+    for(let i = 0; i < bufLen; i++) data[i] = (Math.random() * 2 - 1);
+    let src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    let filter = audioCtx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 1400;
+    filter.Q.value = 0.6;
+    let gain = audioCtx.createGain();
+    gain.gain.setValueAtTime(0.22, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.18);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(audioCtx.destination);
+    src.start();
+}
+
+let _windTimer = 8 + Math.random() * 12;
+function tickWind(delta) {
+    _windTimer -= delta;
+    if(_windTimer <= 0) {
+        _windTimer = 14 + Math.random() * 20;
+        if(audioCtx.state === 'suspended') return;
+        // Gentle wind whoosh: filtered noise, slow fade in/out
+        let dur = 2.5 + Math.random();
+        let bufLen = Math.floor(audioCtx.sampleRate * dur);
+        let buf = audioCtx.createBuffer(1, bufLen, audioCtx.sampleRate);
+        let data = buf.getChannelData(0);
+        for(let i = 0; i < bufLen; i++) data[i] = (Math.random() * 2 - 1);
+        let src = audioCtx.createBufferSource();
+        src.buffer = buf;
+        let filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 400 + Math.random() * 300;
+        let gain = audioCtx.createGain();
+        let peak = 0.06 + Math.random() * 0.04;
+        gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+        gain.gain.linearRampToValueAtTime(peak, audioCtx.currentTime + dur * 0.4);
+        gain.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+        src.connect(filter);
+        filter.connect(gain);
+        gain.connect(audioCtx.destination);
+        src.start();
+        src.stop(audioCtx.currentTime + dur + 0.1);
+    }
+}
+
+// Disable context menu
+document.addEventListener('contextmenu', e => e.preventDefault());
 
 function init() {
     scene = new THREE.Scene();
@@ -179,13 +401,17 @@ function init() {
         }
     }
 
-    // Spawn Mobs
-    for(let i=0; i<4; i++) new Mob(scene, getBlockGlobal, false); // Rabbit
-    for(let i=0; i<2; i++) new Mob(scene, getBlockGlobal, true); // Deer
+    // Spawn Mobs (wrapped in try-catch so errors don't abort init)
+    try {
+        for(let i=0; i<4; i++) new Mob(scene, getBlockGlobal, false); // Rabbit
+        for(let i=0; i<2; i++) new Mob(scene, getBlockGlobal, true); // Deer
+    } catch(e) {
+        console.error('Mob spawn error:', e);
+    }
 
     // Snap player to surface to prevent spawning underground
     for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
-        if (getBlockGlobal(0, y, 0) !== BLOCKS.AIR && getBlockGlobal(0, y, 0) !== BLOCKS.LEAVES) {
+        if (getBlockGlobal(0, y, 0) !== BLOCKS.AIR) {
             camera.position.y = y + 3;
             break;
         }
@@ -198,9 +424,9 @@ function init() {
     
     updateInventoryUI();
     
-    controls = new PointerLockControls(camera, renderer.domElement);
+    controls = new PointerLockControls(camera, document.body);
     
-    let isCraftingOpen = false;
+    craftingMode = 'none'; 
     const craftingMenu = document.getElementById('crafting');
 
     const instructions = document.getElementById('instructions');
@@ -210,30 +436,63 @@ function init() {
         if(audioCtx.state === 'suspended') audioCtx.resume();
     });
     
+    // Instantly cut off mouse processing on ESC to prevent browser's exit-lock mousemove jump
+    document.addEventListener('keydown', (e) => {
+        if (e.code === 'Escape' && controls) {
+            controls.isLocked = false;
+        }
+    }, true);
+    
+    // Catch synthetic browser mouse moves on ESC that fire before keydown
+    // Note: Removed the > 60 movement dropping because it ruins fast gamer flicks (causing "lags" or dropped inputs).
+
     controls.addEventListener('unlock', () => {
-        instructions.style.display = 'flex';
+        // Don't show the pause overlay when any UI is open
+        if (craftingMode === 'none') {
+            instructions.style.display = 'flex';
+        }
     });
     
     scene.add(controls.getObject());
 
     const onKeyDown = function (event) {
+        if (event.repeat) {
+            keys[event.code] = true;
+            return;
+        }
+        keys[event.code] = true;
+        
         switch (event.code) {
-            case 'ArrowUp':
             case 'KeyW': moveForward = true; break;
-            case 'ArrowLeft':
             case 'KeyA': moveLeft = true; break;
-            case 'ArrowDown':
             case 'KeyS': moveBackward = true; break;
-            case 'ArrowRight':
             case 'KeyD': moveRight = true; break;
-            case 'Space':
-                if (canJump === true) velocity.y += 20;
-                canJump = false;
+            case 'ShiftLeft':
+                isSprinting = true;
                 break;
+            case 'Space':
+                const now = performance.now();
+                if (now - lastSpaceTime < 200) {
+                    flyMode = !flyMode;
+                    velocity.y = 0;
+                    lastSpaceTime = 0; // reset
+                } else {
+                    lastSpaceTime = now;
+                }
+                
+                if (!flyMode && canJump === true) {
+                    velocity.y = 11; // Jump exactly ~2 blocks high
+                    canJump = false;
+                }
+                break;
+            case 'KeyE':
+                if (!controls.isLocked) return;
+                // ... rest of E handler handled below ...
         }
     };
 
     const onKeyUp = function (event) {
+        keys[event.code] = false;
         switch (event.code) {
             case 'ArrowUp':
             case 'KeyW': moveForward = false; break;
@@ -253,15 +512,63 @@ function init() {
         
         // Crafting Toggle
         if (event.code === 'KeyE') {
-            isCraftingOpen = !isCraftingOpen;
-            if(isCraftingOpen) {
-                controls.unlock();
-                craftingMenu.style.display = 'block';
-                updateCraftingUI();
-            } else {
-                controls.lock();
+            // Prevent opening crafting if the game hasn't started yet
+            if (!controls.isLocked && craftingMode === 'none' && instructions.style.display === 'flex') return;
+
+            if (craftingMode !== 'none') {
+                craftingMode = 'none';
                 craftingMenu.style.display = 'none';
+                document.getElementById('chest-ui').style.display = 'none';
+                document.getElementById('ui-backdrop').style.display = 'none';
+                instructions.style.display = 'none';
+                document.getElementById('ui').style.pointerEvents = 'none';
+                controls.lock();
+            } else {
+                craftingMode = 'basic';
+                
+                // Smart select chest if looking at it
+                raycaster.setFromCamera(center, camera);
+                let collidable = scene.children.filter(obj => !obj.userData.ignoreRaycast);
+                let intersects = raycaster.intersectObjects(collidable);
+                if (intersects.length > 0 && intersects[0].distance <= 8) {
+                     let point = intersects[0].point;
+                     let normal = intersects[0].face.normal;
+                     let targetX = Math.floor(point.x - normal.x * 0.1);
+                     let targetY = Math.floor(point.y - normal.y * 0.1);
+                     let targetZ = Math.floor(point.z - normal.z * 0.1);
+                     let targetBlockId = getBlockGlobal(targetX, targetY, targetZ);
+                     if (targetBlockId === BLOCKS.CHEST) {
+                         craftingMode = 'chest';
+                         openChest(targetX, targetY, targetZ);
+                         return; // openChest handles unlocking
+                     } else if (targetBlockId === BLOCKS.WORKBENCH) {
+                         craftingMode = 'workbench';
+                     }
+                }
+                
+                craftingMenu.style.display = 'block';
+                document.getElementById('chest-ui').style.display = 'none';
+                instructions.style.display = 'none';
+                document.getElementById('ui').style.pointerEvents = 'auto';
+                
+                try {
+                    updateCraftingUI();
+                } catch(err) {
+                    document.getElementById('debug-text').innerText = "CRAFT_ERR: " + err.message;
+                }
+                
+                ControlsUnlockWait();
             }
+        }
+        
+        // Handle ESC to close UIs safely
+        if (event.code === 'Escape' && craftingMode !== 'none') {
+            craftingMode = 'none';
+            craftingMenu.style.display = 'none';
+            document.getElementById('chest-ui').style.display = 'none';
+            document.getElementById('ui-backdrop').style.display = 'none';
+            document.getElementById('ui').style.pointerEvents = 'none';
+            instructions.style.display = 'flex'; // show pause menu
         }
     };
 
@@ -276,8 +583,8 @@ function init() {
     });
     
     // Raycaster for mining/placing
-    const raycaster = new THREE.Raycaster();
-    const center = new THREE.Vector2(0, 0);
+    raycaster = new THREE.Raycaster();
+    center = new THREE.Vector2(0, 0);
     
     document.addEventListener('mousedown', (e) => {
         if(!controls.isLocked) return;
@@ -308,19 +615,58 @@ function init() {
             let point = intersect.point;
             let normal = intersect.face.normal;
             
+            // For right-click, first check what block we are aiming at.
+            // Using 0.1 prevents floating point errors from putting us in the next block over
+            let targetX = Math.floor(point.x - normal.x * 0.1);
+            let targetY = Math.floor(point.y - normal.y * 0.1);
+            let targetZ = Math.floor(point.z - normal.z * 0.1);
+            
             if (e.button === 0) {
                 // Break block
-                let bx = Math.floor(point.x - normal.x * 0.5);
-                let by = Math.floor(point.y - normal.y * 0.5);
-                let bz = Math.floor(point.z - normal.z * 0.5);
-                let blockId = getBlockGlobal(bx, by, bz);
+                let blockId = getBlockGlobal(targetX, targetY, targetZ);
                 if (blockId !== BLOCKS.AIR) {
-                    setBlockGlobal(bx, by, bz, BLOCKS.AIR);
+                    setBlockGlobal(targetX, targetY, targetZ, BLOCKS.AIR);
                     inventory.addItem(blockId, 1);
+                    // Standardize drops
+                    if (blockId === BLOCKS.CHEST) {
+                         // drop contents (not implemented fully, will just break for now)
+                         if(window.chests && window.chests[`${targetX},${targetY},${targetZ}`]) {
+                             delete window.chests[`${targetX},${targetY},${targetZ}`];
+                             localStorage.setItem('sandbox3d_chests', JSON.stringify(window.chests));
+                         }
+                    }
                     updateInventoryUI();
-                    playSound(300, 0.05); // pop
+                    if (blockId === BLOCKS.LEAVES) {
+                        playLeafSound();
+                    } else {
+                        playSound(300, 0.05); // pop
+                    }
                 }
             } else if (e.button === 2) {
+                // Interact with block
+                let targetBlockId = getBlockGlobal(targetX, targetY, targetZ);
+                
+                if (targetBlockId === BLOCKS.WORKBENCH) {
+                     craftingMode = 'workbench';
+                     craftingMenu.style.display = 'block';
+                     instructions.style.display = 'none';
+                     document.getElementById('ui').style.pointerEvents = 'auto';
+                     
+                     try {
+                         updateCraftingUI();
+                     } catch(err) {
+                         document.getElementById('debug-text').innerText = "CRAFT_ERR: " + err.message;
+                     }
+                     
+                     ControlsUnlockWait();
+                     return;
+                }
+                if (targetBlockId === BLOCKS.CHEST) {
+                     craftingMode = 'chest';
+                     openChest(targetX, targetY, targetZ);
+                     return; // handled inside openChest
+                }
+                
                 // Place block
                 let slot = inventory.slots[inventory.activeSlot];
                 if (!slot || slot.count <= 0) return;
@@ -397,7 +743,7 @@ function checkAABB(px, py, pz) {
         for (let y = startY; y <= endY; y++) {
             for (let z = startZ; z <= endZ; z++) {
                 let blockId = getBlockGlobal(x, y, z);
-                if (blockId !== BLOCKS.AIR && blockId !== BLOCKS.LEAVES) return true;
+                if (blockId !== BLOCKS.AIR) return true;
             }
         }
     }
@@ -415,6 +761,25 @@ function animate() {
 
     const time = performance.now();
 
+    // Debug View Check
+    if (controls.isLocked === true) {
+        raycaster.setFromCamera(center, camera);
+        let collidable = scene.children.filter(obj => !obj.userData.ignoreRaycast);
+        let intersects = raycaster.intersectObjects(collidable);
+        let lookText = "";
+        if (intersects.length > 0 && intersects[0].distance <= 8) {
+            let point = intersects[0].point;
+            let normal = intersects[0].face.normal;
+            let targetX = Math.floor(point.x - normal.x * 0.1);
+            let targetY = Math.floor(point.y - normal.y * 0.1);
+            let targetZ = Math.floor(point.z - normal.z * 0.1);
+            let id = getBlockGlobal(targetX, targetY, targetZ);
+            lookText = id !== BLOCKS.AIR ? BLOCK_NAMES[id] : "";
+        }
+        document.getElementById('debug-text').innerText = lookText ? `Looking at: ${lookText}` : "";
+    }
+
+    // Only allow player movement and interactions if no UI is open
     if (controls.isLocked === true) {
         const delta = Math.min((time - prevTime) / 1000, 0.1); // clamp delta
         
@@ -453,18 +818,27 @@ function animate() {
         }
 
         // Gravity
-        velocity.y -= 20 * delta;
-        if (velocity.y < -25) velocity.y = -25;
+        if (!flyMode) {
+            velocity.y -= 25 * delta;
+            if (velocity.y < -30) velocity.y = -30;
+        } else {
+            if (keys['Space']) velocity.y = 12.0;
+            else if (keys['ShiftLeft']) velocity.y = -12.0;
+            else velocity.y = 0;
+        }
 
         // Get camera yaw direction (horizontal only — ignore pitch)
         const camQuat = camera.quaternion;
         const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camQuat);
         forward.y = 0; forward.normalize();
-        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camQuat);
-        right.y = 0; right.normalize();
+        const right = new THREE.Vector3(1, 0, 1).applyQuaternion(camQuat); // wait, applying 1,0,0 earlier but I will set exactly right vector using cross of forward
+        right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
 
         // Build desired move vector this frame
-        const WALK_SPEED = 4.0; // units per second
+        let speedMult = isSprinting ? 1.6 : 1.0;
+        if (flyMode) speedMult = 2.5; // Fast fly
+        
+        const WALK_SPEED = 4.5 * speedMult;
         let moveVec = new THREE.Vector3(0, 0, 0);
         if (moveForward)  moveVec.addScaledVector(forward,  WALK_SPEED);
         if (moveBackward) moveVec.addScaledVector(forward, -WALK_SPEED);
@@ -510,6 +884,20 @@ function animate() {
             } else { break; }
         }
 
+        // Respawn if falling off the map
+        if (camera.position.y < -50) {
+            camera.position.set(0, 80, 0); 
+            velocity.y = 0;
+            velocity.x = 0;
+            velocity.z = 0;
+            for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+                if (getBlockGlobal(0, y, 0) !== BLOCKS.AIR) {
+                    camera.position.y = y + 3;
+                    break;
+                }
+            }
+        }
+
         // Real displacement (zero if blocked by wall)
         let realDx = Math.abs(camera.position.x - preX);
         let realDz = Math.abs(camera.position.z - preZ);
@@ -536,8 +924,31 @@ function animate() {
         }
         
         // Mobs logic
-        for (let mob of mobsList) {
-            mob.update(delta, camera.position);
+        let dumpStr = "";
+        for (let idx = 0; idx < mobsList.length; idx++) {
+            let mob = mobsList[idx];
+            try {
+                mob.update(delta, camera.position);
+                if (idx < 5) dumpStr += `(${mob.isDeer?'D':'R'}:${mob.group.position.y.toFixed(1)}) `;
+            } catch(e) {
+                console.error("Mob update error:", e);
+                dumpStr += "[ERR] ";
+            }
+        }
+        document.getElementById('debug-text').innerText = `${Math.round(1/delta)} | M: ${mobsList.length} ${dumpStr}`;
+
+        // Ambient wind
+        tickWind(delta);
+
+        // Save player position every ~3 seconds
+        _posSaveTimer -= delta;
+        if (_posSaveTimer <= 0) {
+            localStorage.setItem('sandbox3d_pos', JSON.stringify({
+                x: camera.position.x,
+                y: camera.position.y,
+                z: camera.position.z
+            }));
+            _posSaveTimer = 3.0;
         }
     }
 
@@ -547,6 +958,7 @@ function animate() {
 
 window.modifiedBlocks = {};
 let currentSeed = 1337;
+let _posSaveTimer = 3.0;
 
 document.addEventListener('DOMContentLoaded', () => {
     let savedSeed = localStorage.getItem('sandbox3d_seed');
@@ -563,7 +975,16 @@ document.addEventListener('DOMContentLoaded', () => {
         window.modifiedBlocks = {};
         localStorage.setItem('sandbox3d_mods', JSON.stringify({}));
         
-        startGame();
+        window.chests = {};
+        localStorage.setItem('sandbox3d_chests', JSON.stringify({}));
+        
+        localStorage.removeItem('sandbox3d_pos'); // reset spawn position
+        
+        inventory.slots = Array(9).fill(null);
+        inventory.slots[0] = { id: BLOCKS.WOOD, count: 10 };
+        inventory.activeSlot = 0;
+        
+        startGame(null);
     };
     
     document.getElementById('btn-load-world').onclick = (e) => {
@@ -575,27 +996,56 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             window.modifiedBlocks = {};
         }
-        startGame();
+        
+        let chestData = localStorage.getItem('sandbox3d_chests');
+        if (chestData) {
+            window.chests = JSON.parse(chestData);
+        } else {
+            window.chests = {};
+        }
+        
+        let savedInv = localStorage.getItem('sandbox3d_inventory');
+        if(savedInv) {
+             inventory.slots = JSON.parse(savedInv);
+        }
+
+        let savedPos = null;
+        let posData = localStorage.getItem('sandbox3d_pos');
+        if (posData) savedPos = JSON.parse(posData);
+
+        startGame(savedPos);
     };
 });
 
-function startGame() {
+function startGame(savedPos) {
     document.getElementById('menu-warning').style.display = 'block';
     
-    setTimeout(() => {
-        setSeed(currentSeed);
-        document.getElementById('menu-buttons').style.display = 'none';
-        document.getElementById('menu-warning').style.display = 'none';
-        
-        init();
-        animate();
-        
-        const instructions = document.getElementById('instructions');
-        instructions.style.display = 'none';
-        instructions.onclick = () => {
-             controls.lock();
-        };
-        
-        controls.lock();
-    }, 50);
+    // We must execute synchronously because requestPointerLock must be called
+    // within the same execution path as the user's click event.
+    setSeed(currentSeed);
+    document.getElementById('menu-buttons').style.display = 'none';
+    document.getElementById('menu-warning').style.display = 'none';
+    
+    init();
+    animate();
+    
+    // Restore saved position (overrides default surface snap)
+    if (savedPos) {
+        camera.position.set(savedPos.x, savedPos.y, savedPos.z);
+    }
+    
+    // Safety ejection: if player is somehow inside blocks (e.g. from a bad save or sudden tree grab), pop them up
+    let failSafe = 20;
+    while (checkAABB(camera.position.x, camera.position.y, camera.position.z) && failSafe > 0) {
+        camera.position.y += 1.0;
+        failSafe--;
+    }
+    
+    const instructions = document.getElementById('instructions');
+    instructions.style.display = 'none';
+    instructions.onclick = () => {
+         controls.lock();
+    };
+    
+    controls.lock();
 }

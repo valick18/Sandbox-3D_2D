@@ -38,6 +38,8 @@ body {
     color: white;
     pointer-events: auto; /* Allow click */
     cursor: pointer;
+    box-sizing: border-box;
+    padding-bottom: 80px; /* Prevent text from overlapping the hotbar */
 }
 
 #instructions h1 {
@@ -132,4 +134,50 @@ body {
     display: inline-block;
     border: 1px solid #000;
     image-rendering: pixelated;
+}
+
+#chest-ui {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 320px;
+    background: rgba(30, 20, 10, 0.95);
+    border: 2px solid #532;
+    padding: 20px;
+    border-radius: 8px;
+    pointer-events: auto;
+    color: white;
+}
+
+#chest-ui h2 {
+    margin: 5px 0;
+    font-size: 16px;
+    border-bottom: 1px solid #532;
+    padding-bottom: 5px;
+}
+
+#chest-grid, #player-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 15px;
+}
+
+.chest-slot, .player-slot {
+    width: 44px;
+    height: 44px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid #555;
+    border-radius: 4px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    cursor: pointer;
+}
+
+.chest-slot:hover, .player-slot:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: #fff;
 }

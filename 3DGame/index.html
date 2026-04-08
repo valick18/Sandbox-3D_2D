@@ -29,10 +29,18 @@
             <p>Press E to Craft</p>
             <p id="menu-warning" style="color: yellow; display: none;">Generating, please wait...</p>
         </div>
+        <div id="debug-text" style="position:absolute; top:10px; left:10px; color:white; font-family:monospace; pointer-events:none; z-index:99999; text-shadow:1px 1px 0 #000; font-size:16px;"></div>
         <div id="hotbar"></div>
+        <div id="ui-backdrop" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); pointer-events:auto;"></div>
         <div id="crafting" style="display:none;">
             <h2>Crafting</h2>
             <div id="recipe-list"></div>
+        </div>
+        <div id="chest-ui" style="display:none;">
+            <h2>Chest</h2>
+            <div id="chest-grid"></div>
+            <h2>Inventory</h2>
+            <div id="player-grid"></div>
         </div>
     </div>
     <script type="module" src="js/main.js"></script>

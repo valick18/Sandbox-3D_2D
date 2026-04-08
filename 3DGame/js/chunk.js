@@ -70,8 +70,14 @@ export class Chunk {
                 }
                 
                 // Trees
-                if (!isDesert && !isSnow && Math.random() < 0.02) {
-                    let treeHeight = 4 + Math.floor(Math.random() * 3);
+                // Use a high-frequency spatial hash instead of continuous noise to avoid clumping
+                let hash = Math.sin(wx * 12.9898 + wz * 78.233) * 43758.5453;
+                let treeRng = hash - Math.floor(hash);
+
+                if (!isDesert && !isSnow && treeRng < 0.015) { // 1.5% chance, purely random
+                    let hash2 = Math.sin(wx * 39.346 + wz * 11.135) * 43758.5453;
+                    let hRng = hash2 - Math.floor(hash2);
+                    let treeHeight = 4 + Math.floor(hRng * 3);
                     for(let ty = 1; ty <= treeHeight; ty++) {
                         if (surfaceY + ty < CHUNK_HEIGHT)
                             this.data[this.getIndex(x, surfaceY + ty, z)] = BLOCKS.WOOD;

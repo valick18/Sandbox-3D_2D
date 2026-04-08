@@ -9,7 +9,9 @@ export const BLOCKS = {
     LEAVES: 5,
     SAND: 6,
     PLANKS: 7,
-    MEAT: 8
+    MEAT: 8,
+    WORKBENCH: 9,
+    CHEST: 10
 };
 
 // Colors for each block
@@ -21,7 +23,9 @@ const BASE_COLORS = {
     [BLOCKS.LEAVES]: [40, 120, 40],
     [BLOCKS.SAND]: [238, 214, 150],
     [BLOCKS.PLANKS]: [180, 140, 90],
-    [BLOCKS.MEAT]: [220, 60, 60]
+    [BLOCKS.MEAT]: [220, 60, 60],
+    [BLOCKS.WORKBENCH]: [160, 110, 60], // lighter wood
+    [BLOCKS.CHEST]: [140, 90, 40] // medium wood
 };
 
 const size = 64; // HD Textures
@@ -126,25 +130,56 @@ export function generateMaterials() {
         return [c[0]+grain+vary, c[1]+grain+vary, c[2]+grain+vary];
     });
 
-    // Leaves - Natural clumps
+    // Leaves - Minecraft-style: tiny leaf shapes on dark green bg
     let leafMat = createCanvasTex(BLOCKS.LEAVES, (x, y) => {
-        let nx = (x / 64) * Math.PI * 2;
-        let ny = (y / 64) * Math.PI * 2;
-        let vary = (Math.random() - 0.5) * 25;
-        let a = 255;
-        
-        let cell = Math.sin(nx * 6) * Math.cos(ny * 6) + Math.sin(nx * 3 + ny * 5);
-        if (cell < -0.3) {
-            a = 0; // distinct holes
+        // Small 4px cells — each cell randomly filled or empty
+        const cell = 4;
+        let cx = Math.floor(x / cell);
+        let cy = Math.floor(y / cell);
+        let lx = x % cell;
+        let ly = y % cell;
+
+        // Deterministic hash per cell
+        const h = (a, b) => {
+            let v = Math.sin(a * 57.3 + b * 231.7 + 3.1) * 85432.131;
+            return v - Math.floor(v);
+        };
+        let hv = h(cx, cy);
+
+        // Sub-cell for inner highlight variation
+        const hv2 = h(cx * 2.1 + 0.7, cy * 1.9 + 0.3);
+
+        // ~70% of cells are bright leaf patches
+        let isLeaf = hv > 0.30;
+        // 1-pixel border between cells (dark outline)
+        let isBorder = (lx === 0 || ly === 0);
+
+        let r, g, b;
+
+        if (isLeaf && !isBorder) {
+            // Leaf surface: range from mid-green to bright green
+            let bright = Math.floor(hv2 * 40);
+            r = 38 + bright;
+            g = 110 + bright + Math.floor(hv * 30);
+            b = 28 + Math.floor(hv2 * 10);
+        } else if (isLeaf && isBorder) {
+            // Leaf edge: darker
+            r = 22; g = 75; b = 20;
         } else {
-            vary += cell * 30; // highlight leaves
+            // Gap between leaves: very dark green
+            r = 14; g = 50; b = 14;
         }
-        let c = BASE_COLORS[BLOCKS.LEAVES];
-        return [c[0]+vary, c[1]+vary, c[2]+vary, a];
+
+        // High-frequency pixel noise for texture depth (like MC dithering)
+        let noise = Math.floor((Math.sin(x * 13.7 + y * 9.3) * 0.5 + 0.5) * 14) - 7;
+        r = Math.max(0, Math.min(255, r + noise));
+        g = Math.max(0, Math.min(255, g + noise));
+        b = Math.max(0, Math.min(255, b + noise));
+
+        return [r, g, b, 255];
     });
-    // For alpha to work well in WebGL without sorting issues, alphaTest is critical
-    leafMat.transparent = false; // Disable standard transparency
-    leafMat.alphaTest = 0.5; // Only render pixels > 50% opacity (hard cut out)
+    leafMat.transparent = false;
+    leafMat.alphaTest = 0;
     materials[BLOCKS.LEAVES] = leafMat;
     
     // Sand - very fine subtle noise
@@ -173,5 +208,45 @@ export function generateMaterials() {
              return [240+vary, 220+vary, 220+vary];
         }
         return [c[0]+vary, c[1]+vary, c[2]+vary];
+    });
+
+    // Workbench - grid/tools on top, planks on side
+    materials[BLOCKS.WORKBENCH] = createCanvasTex(BLOCKS.WORKBENCH, (x, y) => {
+        let vary = (Math.random() - 0.5) * 10;
+        let c = BASE_COLORS[BLOCKS.WORKBENCH];
+        // Grid pattern
+        if (x % 32 < 2 || y % 32 < 2) {
+            return [c[0]-40+vary, c[1]-40+vary, c[2]-40+vary];
+        }
+        // Simulated tools (pixels)
+        if ((x > 10 && x < 20 && y > 10 && y < 15) || (x > 40 && x < 45 && y > 30 && y < 50)) {
+            return [100+vary, 100+vary, 110+vary]; // metallic tool parts
+        }
+        return [c[0]+vary, c[1]+vary, c[2]+vary];
+    });
+
+    // Chest - wood with iron borders and lock
+    materials[BLOCKS.CHEST] = createCanvasTex(BLOCKS.CHEST, (x, y) => {
+        let vary = (Math.random() - 0.5) * 10;
+        let c = BASE_COLORS[BLOCKS.CHEST];
+        // Wood grain
+        let grain = Math.sin((x / 64) * Math.PI * 10) * 10;
+        
+        // Iron borders
+        if (x < 4 || x > 60 || y < 4 || y > 60) {
+            return [60, 60, 65]; // iron rim
+        }
+        
+        // Lock
+        if (x > 28 && x < 36 && y > 24 && y < 36) {
+            return [200+vary, 200+vary, 200+vary]; // silver lock
+        }
+        
+        // horizontal plank lines
+        if (y % 16 < 2) {
+            return [c[0]-30+vary, c[1]-30+vary, c[2]-30+vary];
+        }
+        
+        return [c[0]+grain+vary, c[1]+grain+vary, c[2]+grain+vary];
     });
 }
