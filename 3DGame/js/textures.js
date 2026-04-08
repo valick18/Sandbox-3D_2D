@@ -11,7 +11,9 @@ export const BLOCKS = {
     PLANKS: 7,
     MEAT: 8,
     WORKBENCH: 9,
-    CHEST: 10
+    CHEST: 10,
+    WATER: 11,
+    CACTUS: 12
 };
 
 // Colors for each block
@@ -25,7 +27,9 @@ const BASE_COLORS = {
     [BLOCKS.PLANKS]: [180, 140, 90],
     [BLOCKS.MEAT]: [220, 60, 60],
     [BLOCKS.WORKBENCH]: [160, 110, 60], // lighter wood
-    [BLOCKS.CHEST]: [140, 90, 40] // medium wood
+    [BLOCKS.CHEST]: [140, 90, 40], // medium wood
+    [BLOCKS.WATER]: [40, 80, 220],
+    [BLOCKS.CACTUS]: [30, 130, 40]
 };
 
 const size = 64; // HD Textures
@@ -105,6 +109,8 @@ export function generateMaterials() {
             return [c[0]+vary+clumps, c[1]+vary+clumps, c[2]+vary+clumps];
         }
     });
+    // Overwrite the Grass inventory icon to use the Grass Side texture so it looks exactly like "Dirt with Grass" to the user
+    icons[BLOCKS.GRASS] = icons[100];
 
     // Stone - cobbled look
     materials[BLOCKS.STONE] = createCanvasTex(BLOCKS.STONE, (x, y) => {
@@ -248,5 +254,40 @@ export function generateMaterials() {
         }
         
         return [c[0]+grain+vary, c[1]+grain+vary, c[2]+grain+vary];
+    });
+
+    // Water - translucent animated feel
+    let waterMat = createCanvasTex(BLOCKS.WATER, (x, y) => {
+        let nx = (x / 64) * Math.PI * 2;
+        let ny = (y / 64) * Math.PI * 2;
+        let wave = Math.sin(nx * 2 + ny * 3) * 10;
+        let c = BASE_COLORS[BLOCKS.WATER];
+        return [c[0]+wave, c[1]+wave, c[2]+wave];
+    });
+    waterMat.transparent = true;
+    waterMat.opacity = 0.75;
+    waterMat.depthWrite = true;       // MUST be true to block solid geometry from bleeding through
+    waterMat.side = THREE.DoubleSide;
+    waterMat.polygonOffset = true;
+    waterMat.polygonOffsetFactor = -2;
+    waterMat.polygonOffsetUnits = -2;
+    materials[BLOCKS.WATER] = waterMat;
+
+    // Cactus - green with dark vertical lines and spine dots
+    materials[BLOCKS.CACTUS] = createCanvasTex(BLOCKS.CACTUS, (x, y) => {
+        let vary = (Math.random() - 0.5) * 10;
+        let c = BASE_COLORS[BLOCKS.CACTUS];
+        
+        // vertical ridges
+        if (x % 16 < 2) {
+             return [c[0]-30+vary, c[1]-30+vary, c[2]-30+vary];
+        }
+        
+        // spikes
+        if (Math.random() < 0.05) {
+             return [200, 200, 150]; // pale spike
+        }
+        
+        return [c[0]+vary, c[1]+vary, c[2]+vary];
     });
 }

@@ -32,7 +32,6 @@ class Inventory {
     
     addItem(id, amount = 1) {
         if(id === BLOCKS.AIR) return; // ignore air
-        if(id === BLOCKS.GRASS) id = BLOCKS.DIRT; // grass drops dirt
         
         let existing = this.slots.find(s => s && s.id === id);
         if (existing) {
@@ -371,13 +370,13 @@ function init() {
     generateMaterials();
     
     // Sky Bodies
-    const sunGeom = new THREE.SphereGeometry(15, 16, 16);
-    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffffdd });
+    const sunGeom = new THREE.SphereGeometry(8, 16, 16);
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffffdd, fog: false, transparent: true });
     sunMesh = new THREE.Mesh(sunGeom, sunMat);
     sunMesh.userData = { ignoreRaycast: true };
     scene.add(sunMesh);
     
-    const moonMat = new THREE.MeshBasicMaterial({ color: 0xddddff });
+    const moonMat = new THREE.MeshBasicMaterial({ color: 0xddddff, fog: false, transparent: true });
     moonMesh = new THREE.Mesh(sunGeom, moonMat);
     moonMesh.userData = { ignoreRaycast: true };
     scene.add(moonMesh);
@@ -394,9 +393,9 @@ function init() {
     starsMesh.userData = { ignoreRaycast: true };
     scene.add(starsMesh);
     
-    // Build initial chunks
-    for (let cx = -2; cx <= 2; cx++) {
-        for (let cz = -2; cz <= 2; cz++) {
+    // Build initial chunks (Expanded Map Size)
+    for (let cx = -7; cx <= 7; cx++) {
+        for (let cz = -7; cz <= 7; cz++) {
             chunks[`${cx},${cz}`] = new Chunk(cx, cz, scene, materials);
         }
     }
@@ -624,7 +623,7 @@ function init() {
             if (e.button === 0) {
                 // Break block
                 let blockId = getBlockGlobal(targetX, targetY, targetZ);
-                if (blockId !== BLOCKS.AIR) {
+                if (blockId !== BLOCKS.AIR && blockId !== BLOCKS.WATER) {
                     setBlockGlobal(targetX, targetY, targetZ, BLOCKS.AIR);
                     inventory.addItem(blockId, 1);
                     // Standardize drops
@@ -632,11 +631,11 @@ function init() {
                          // drop contents (not implemented fully, will just break for now)
                          if(window.chests && window.chests[`${targetX},${targetY},${targetZ}`]) {
                              delete window.chests[`${targetX},${targetY},${targetZ}`];
-                             localStorage.setItem('sandbox3d_chests', JSON.stringify(window.chests));
+                             saveChests();
                          }
                     }
                     updateInventoryUI();
-                    if (blockId === BLOCKS.LEAVES) {
+                    if (blockId === BLOCKS.LEAVES || blockId === BLOCKS.GRASS) {
                         playLeafSound();
                     } else {
                         playSound(300, 0.05); // pop
@@ -675,6 +674,19 @@ function init() {
                 let by = Math.floor(point.y + normal.y * 0.5);
                 let bz = Math.floor(point.z + normal.z * 0.5);
                 
+                // If we're placing into a water block, replace it directly
+                let destBlock = getBlockGlobal(bx, by, bz);
+                if (destBlock !== BLOCKS.WATER) {
+                    // Also check if targeted face belongs to a water block — place INTO it
+                    let wx = Math.floor(point.x - normal.x * 0.5);
+                    let wy = Math.floor(point.y - normal.y * 0.5);
+                    let wz = Math.floor(point.z - normal.z * 0.5);
+                    let facedBlock = getBlockGlobal(wx, wy, wz);
+                    if (facedBlock === BLOCKS.WATER) {
+                        bx = wx; by = wy; bz = wz; // place INTO the water block
+                    }
+                }
+                
                 // Prevent placing inside player
                 let px = Math.floor(camera.position.x);
                 let py = Math.floor(camera.position.y);
@@ -707,10 +719,14 @@ function setBlockGlobal(bx, by, bz, blockId) {
     let chunk = chunks[`${cx},${cz}`];
     if (chunk) {
         chunk.data[chunk.getIndex(lx, by, lz)] = blockId;
-        chunk.buildMesh(); 
+        chunk.buildMesh();
         
-        // Update neighbors if on the edge, so faces cull properly!
-        // Simplified for now.
+        // Rebuild neighboring chunks if block is on a chunk edge
+        // so water faces appear/disappear correctly across boundaries
+        if (lx === 0)            { let nc = chunks[`${cx-1},${cz}`]; if (nc) nc.buildMesh(); }
+        if (lx === CHUNK_SIZE-1) { let nc = chunks[`${cx+1},${cz}`]; if (nc) nc.buildMesh(); }
+        if (lz === 0)            { let nc = chunks[`${cx},${cz-1}`]; if (nc) nc.buildMesh(); }
+        if (lz === CHUNK_SIZE-1) { let nc = chunks[`${cx},${cz+1}`]; if (nc) nc.buildMesh(); }
     }
 }
 
@@ -721,8 +737,9 @@ function getBlockGlobal(bx, by, bz) {
     let lz = bz - cz * CHUNK_SIZE;
     let chunk = chunks[`${cx},${cz}`];
     if(chunk) return chunk.getBlock(lx, by, lz);
-    return BLOCKS.AIR;
+    return by <= 58 ? BLOCKS.WATER : BLOCKS.AIR;
 }
+window.getBlockGlobal = getBlockGlobal;
 
 // Complete AABB Box checking logic
 function checkAABB(px, py, pz) {
@@ -743,7 +760,7 @@ function checkAABB(px, py, pz) {
         for (let y = startY; y <= endY; y++) {
             for (let z = startZ; z <= endZ; z++) {
                 let blockId = getBlockGlobal(x, y, z);
-                if (blockId !== BLOCKS.AIR) return true;
+                if (blockId !== BLOCKS.AIR && blockId !== BLOCKS.WATER) return true;
             }
         }
     }
@@ -788,7 +805,7 @@ function animate() {
         let speed = isDay ? (Math.PI / 900) : (Math.PI / 600); // Day: 15m, Night: 10m
         gameTime += delta * speed;
         let sunAngle = gameTime;
-        let sunDist = 200;
+        let sunDist = 350;
         dirLight.position.set(Math.cos(sunAngle)*sunDist, Math.sin(sunAngle)*sunDist, Math.sin(sunAngle*0.2)*50);
         
         sunMesh.position.copy(dirLight.position).add(camera.position);
@@ -796,31 +813,81 @@ function animate() {
         starsMesh.position.copy(camera.position);
         
         let dayNess = Math.sin(sunAngle); // 1 = noon, 0 = dusk, -1 = midnight
+
+        // Fade celestial bodies near horizon to prevent seeing them through the maps bottom
+        sunMesh.material.opacity = Math.max(0, Math.min(1, dayNess * 5));
+        moonMesh.material.opacity = Math.max(0, Math.min(1, -dayNess * 5));
+
+        // Detect Water
+        let feetBlock = getBlockGlobal(
+            Math.floor(camera.position.x),
+            Math.floor(camera.position.y - 1.7),
+            Math.floor(camera.position.z)
+        );
+        let headBlock = getBlockGlobal(
+            Math.floor(camera.position.x),
+            Math.floor(camera.position.y - 0.2),
+            Math.floor(camera.position.z)
+        );
+        let cameraBlock = getBlockGlobal(
+            Math.floor(camera.position.x),
+            Math.floor(camera.position.y),
+            Math.floor(camera.position.z)
+        );
+        
+        let inWater = headBlock === BLOCKS.WATER || feetBlock === BLOCKS.WATER;
+        let cameraInWater = cameraBlock === BLOCKS.WATER;
         
         // Background color blending
-        if (dayNess > 0) {
-            // Day
-            let h = 0.55; // Blue
-            let s = 0.6;
-            let l = Math.max(0.05, dayNess * 0.6);
-            scene.background.setHSL(h, s, l);
-            scene.fog.color.setHSL(h, s, l);
-            dirLight.intensity = dayNess * 0.8;
-            ambientLight.intensity = Math.max(0.1, dayNess * 0.4);
-            starsMesh.material.opacity = 0;
+        if (cameraInWater) {
+             // Underwater blue fog effect
+             let waterFog = new THREE.Color().setHSL(0.6, 0.8, dayNess > 0 ? 0.3 : 0.1);
+             scene.background.copy(waterFog);
+             scene.fog.color.copy(waterFog);
+             scene.fog.near = 0.1;
+             scene.fog.far = 15; // very thick fog underwater
+             dirLight.intensity = dayNess > 0 ? dayNess * 0.4 : 0;
+             ambientLight.intensity = Math.max(0.1, dayNess * 0.4);
+             starsMesh.material.opacity = 0;
         } else {
-            // Night
-            scene.background.setHex(0x050515);
-            scene.fog.color.setHex(0x050515);
-            dirLight.intensity = 0;
-            ambientLight.intensity = 0.1; // Moon approximation
-            starsMesh.material.opacity = Math.min(1.0, -dayNess * 1.5);
+            scene.fog.near = 10;
+            scene.fog.far = 80;
+            
+            if (dayNess > 0) {
+                // Day
+                let h = 0.55; // Blue
+                let s = 0.6;
+                let l = Math.max(0.05, dayNess * 0.6);
+                scene.background.setHSL(h, s, l);
+                scene.fog.color.setHSL(h, s, l);
+                dirLight.intensity = dayNess * 0.8;
+                ambientLight.intensity = Math.max(0.1, dayNess * 0.4);
+                starsMesh.material.opacity = 0;
+            } else {
+                // Night
+                scene.background.setHex(0x050515);
+                scene.fog.color.setHex(0x050515);
+                dirLight.intensity = 0;
+                ambientLight.intensity = 0.1; // Moon approximation
+                starsMesh.material.opacity = Math.min(1.0, -dayNess * 1.5);
+            }
         }
 
-        // Gravity
+        // Gravity / Buoyancy
         if (!flyMode) {
-            velocity.y -= 25 * delta;
-            if (velocity.y < -30) velocity.y = -30;
+            if (inWater) {
+                // Swimming physics
+                velocity.y -= 8 * delta; // Much slower gravity / sinking
+                if (velocity.y < -3) velocity.y = -3; // Terminal swim sink speed
+                
+                if (keys['Space']) {
+                     velocity.y += 20 * delta; // Swim up
+                     if (velocity.y > 6) velocity.y = 6;
+                }
+            } else {
+                velocity.y -= 25 * delta;
+                if (velocity.y < -30) velocity.y = -30;
+            }
         } else {
             if (keys['Space']) velocity.y = 12.0;
             else if (keys['ShiftLeft']) velocity.y = -12.0;
@@ -837,6 +904,7 @@ function animate() {
         // Build desired move vector this frame
         let speedMult = isSprinting ? 1.6 : 1.0;
         if (flyMode) speedMult = 2.5; // Fast fly
+        if (inWater && !flyMode) speedMult *= 0.5; // Water heavily slows movement
         
         const WALK_SPEED = 4.5 * speedMult;
         let moveVec = new THREE.Vector3(0, 0, 0);
@@ -1018,34 +1086,38 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function startGame(savedPos) {
-    document.getElementById('menu-warning').style.display = 'block';
-    
-    // We must execute synchronously because requestPointerLock must be called
-    // within the same execution path as the user's click event.
-    setSeed(currentSeed);
     document.getElementById('menu-buttons').style.display = 'none';
-    document.getElementById('menu-warning').style.display = 'none';
+    const warning = document.getElementById('menu-warning');
+    warning.style.display = 'block';
+    warning.innerText = "Generating world, please wait...";
     
-    init();
-    animate();
-    
-    // Restore saved position (overrides default surface snap)
-    if (savedPos) {
-        camera.position.set(savedPos.x, savedPos.y, savedPos.z);
-    }
-    
-    // Safety ejection: if player is somehow inside blocks (e.g. from a bad save or sudden tree grab), pop them up
-    let failSafe = 20;
-    while (checkAABB(camera.position.x, camera.position.y, camera.position.z) && failSafe > 0) {
-        camera.position.y += 1.0;
-        failSafe--;
-    }
-    
-    const instructions = document.getElementById('instructions');
-    instructions.style.display = 'none';
-    instructions.onclick = () => {
-         controls.lock();
-    };
-    
-    controls.lock();
+    // Defer initialization to allow the browser to render the loading text
+    setTimeout(() => {
+        setSeed(currentSeed);
+        warning.style.display = 'none';
+        
+        init();
+        animate();
+        
+        // Restore saved position
+        if (savedPos) {
+            camera.position.set(savedPos.x, savedPos.y, savedPos.z);
+        }
+        
+        // Safety ejection
+        let failSafe = 20;
+        while (checkAABB(camera.position.x, camera.position.y, camera.position.z) && failSafe > 0) {
+            camera.position.y += 1.0;
+            failSafe--;
+        }
+        
+        const instructions = document.getElementById('instructions');
+        instructions.style.display = 'flex';
+        instructions.innerHTML = '<div style="background:rgba(0,0,0,0.7); padding:40px; border-radius:10px; text-align:center;"><h1>World Ready!</h1><p style="font-size:24px; cursor:pointer;" id="click-to-play">➡️ Click here or on the screen to play ⬅️</p></div>';
+        
+        // Allow the user to explicitly trigger the lock, bypassing browser security timeouts
+        instructions.onclick = () => {
+             controls.lock();
+        };
+    }, 100);
 }

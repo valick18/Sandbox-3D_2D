@@ -193,7 +193,8 @@ export class Mob {
         for (let y = minY; y <= maxY; y++) {
             for (let x = minX; x <= maxX; x++) {
                 for (let z = minZ; z <= maxZ; z++) {
-                    if (this.getBlock(x, y, z) !== BLOCKS.AIR) return true;
+                    let b = this.getBlock(x, y, z);
+                    if (b !== BLOCKS.AIR && b !== BLOCKS.WATER) return true;
                 }
             }
         }
@@ -205,11 +206,21 @@ export class Mob {
             this.group.position.y = 80;
         }
 
-        // Gravity
-        this.velocity.y -= (this.isDeer ? 30 : 25) * delta;
+        let pos = this.group.position;
+        let blockAtCenter = this.getBlock(Math.floor(pos.x), Math.floor(pos.y + 0.1), Math.floor(pos.z));
+        let inWater = blockAtCenter === BLOCKS.WATER;
+
+        // Gravity & Buoyancy
+        if (inWater) {
+             this.velocity.y += 12 * delta; // float up
+             if(this.velocity.y > 3) this.velocity.y = 3;
+        } else {
+             this.velocity.y -= (this.isDeer ? 30 : 25) * delta;
+        }
 
         let halfH = this.isDeer ? 0.96 : 0.20;
         let speed = this.isDeer ? 4.5 : 2.5;
+        if (inWater) speed *= 0.6; // swim slower
 
         let dist = this.group.position.distanceTo(playerPos);
 
@@ -267,7 +278,7 @@ export class Mob {
         }
 
         // Applies gravity and calculates new position
-        let pos = this.group.position;
+        pos = this.group.position;
         let ny = pos.y + this.velocity.y * delta;
         let nx = pos.x;
         let nz = pos.z;
@@ -303,7 +314,8 @@ export class Mob {
             let hitCeiling = false;
             for (let xx = Math.floor(nx - r); xx <= Math.floor(nx + r); xx++) {
                 for (let zz = Math.floor(nz - r); zz <= Math.floor(nz + r); zz++) {
-                    if (this.getBlock(xx, topY, zz) !== BLOCKS.AIR) hitCeiling = true;
+                    let cb = this.getBlock(xx, topY, zz);
+                    if (cb !== BLOCKS.AIR && cb !== BLOCKS.WATER) hitCeiling = true;
                 }
             }
             if (hitCeiling) {
@@ -325,7 +337,8 @@ export class Mob {
             let r = this.isDeer ? 0.35 : 0.18;
             for (let xx = Math.floor(nx - r); xx <= Math.floor(nx + r); xx++) {
                 for (let zz = Math.floor(nz - r); zz <= Math.floor(nz + r); zz++) {
-                    if (this.getBlock(xx, yy, zz) !== BLOCKS.AIR) isSolid = true;
+                    let gb = this.getBlock(xx, yy, zz);
+                    if (gb !== BLOCKS.AIR && gb !== BLOCKS.WATER) isSolid = true;
                 }
             }
             if (isSolid) {
