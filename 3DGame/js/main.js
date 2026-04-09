@@ -122,18 +122,17 @@ function playThunder(dist = 1) {
         const bufSize = audioCtx.sampleRate * dur;
         const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
         const data = buf.getChannelData(0);
-        // Create brown-ish noise
+        
         let lastOut = 0;
         for (let i = 0; i < bufSize; i++) {
             let white = Math.random() * 2 - 1;
             data[i] = (lastOut + (0.02 * white)) / 1.02;
             lastOut = data[i];
-            data[i] *= 3.5; // boost
+            data[i] *= 3.5;
         }
 
         const src = audioCtx.createBufferSource();
         src.buffer = buf;
-
         const filter = audioCtx.createBiquadFilter();
         filter.type = 'lowpass';
         filter.frequency.value = 100 + Math.random() * 200;
@@ -141,11 +140,21 @@ function playThunder(dist = 1) {
         const gain = audioCtx.createGain();
         let vol = (0.3 + Math.random() * 0.4) / dist;
         
-        // Muffle if indoor
+        // Dynamic check at time of sound
         let wx = Math.floor(camera.position.x), wz = Math.floor(camera.position.z);
         let surfaceY = getSurfaceY(wx, wz);
-        if (camera.position.y < surfaceY - 1) vol *= 0.3;
-        if (camera.position.y < surfaceY - 8) vol = 0;
+        let currentDepth = (surfaceY - 1) - camera.position.y;
+        
+        if (currentDepth > 0) {
+            vol *= 0.2; // muffled
+            if (currentDepth > 8) vol = 0; // silent
+        } else {
+            // Roof check
+            for (let y = Math.floor(camera.position.y) + 1; y < Math.floor(camera.position.y) + 15; y++) {
+                let b = getBlockGlobal(wx, y, wz);
+                if (b !== BLOCKS.AIR && b !== BLOCKS.WATER && b !== BLOCKS.LEAVES) { vol *= 0.5; break; }
+            }
+        }
 
         gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
         gain.gain.exponentialRampToValueAtTime(vol, audioCtx.currentTime + 0.1);
@@ -208,45 +217,23 @@ function initRain(scene) {
     scene.add(rainParticles);
 }
 
-function updateRain(delta, cameraPos) {
+function updateRain(delta, cameraPos, isSheltered) {
     if (!rainParticles) return;
     
     const fadeSpeed = 0.15;
     if (isRaining && rainIntensity < 1) rainIntensity = Math.min(1, rainIntensity + delta * fadeSpeed);
     else if (!isRaining && rainIntensity > 0) rainIntensity = Math.max(0, rainIntensity - delta * fadeSpeed);
 
-    // Shelter/Depth Audio check
-    let sheltered = false;
-    let deep = false;
-    let wx = Math.floor(camera.position.x);
-    let wz = Math.floor(camera.position.z);
-    let surfaceY = getSurfaceY(wx, wz);
-    let topBlock = getBlockGlobal(wx, surfaceY - 1, wz);
-
-    let depth = (surfaceY - 1) - camera.position.y;
-    
-    if (depth > 0) {
-        // If deep enough, it fades out regardless of what's on top
-        if (depth > 8) deep = true;
-        // Only muffle (low-pass) if it's NOT leaves
-        if (topBlock !== BLOCKS.LEAVES) sheltered = true;
-    } 
-    
-    // If not already sheltered by ground, check for overhead roofs
-    if (!sheltered && !deep) {
-        for (let y = Math.floor(camera.position.y) + 1; y < Math.floor(camera.position.y) + 15; y++) {
-            let b = getBlockGlobal(wx, y, wz);
-            if (b !== BLOCKS.AIR && b !== BLOCKS.WATER && b !== BLOCKS.LEAVES) { 
-                sheltered = true; 
-                break; 
-            }
-        }
-    }
-
     rainParticles.material.opacity = rainIntensity * 0.45;
     if (rainAudioGain && rainFilter) {
-        let targetFreq = sheltered ? 400 : 1200;
-        let targetVol = deep ? 0 : (sheltered ? 0.04 : 0.12);
+        let targetFreq = isSheltered ? 400 : 1200;
+        let targetVol = (isSheltered ? 0.04 : 0.12); // Deep is handled implicitly by being sheltered? No, let's keep it clean
+        // Actually animate loop will handle global vol if deep. 
+        // But for now rain sound is separate.
+        let wx = Math.floor(camera.position.x), wz = Math.floor(camera.position.z);
+        let surfaceY = getSurfaceY(wx, wz);
+        if (camera.position.y < surfaceY - 9) targetVol = 0; 
+        
         rainFilter.frequency.setTargetAtTime(targetFreq, audioCtx.currentTime, 0.2);
         rainAudioGain.gain.setTargetAtTime(targetVol * rainIntensity, audioCtx.currentTime, 0.2);
     }
@@ -1297,11 +1284,29 @@ function animate() {
     moonMesh.material.opacity = Math.max(0, Math.min(1, -dayNess * 5));
     starsMesh.material.opacity = (dayNess > 0) ? 0 : Math.min(1.0, -dayNess * 2.0);
 
+    // --- SHELTER DETECTION (Shared) ---
+    let wx = Math.floor(camera.position.x);
+    let wz = Math.floor(camera.position.z);
+    let surfaceY = getSurfaceY(wx, wz);
+    let topBlock = getBlockGlobal(wx, surfaceY - 1, wz);
+    let currentDepth = (surfaceY - 1) - camera.position.y;
+    
+    let isSheltered = false;
+    let isDeep = (currentDepth > 8);
+    
+    if (currentDepth > 0 && topBlock !== BLOCKS.LEAVES) isSheltered = true;
+    if (!isSheltered && !isDeep) {
+        for (let y = Math.floor(camera.position.y) + 1; y < Math.floor(camera.position.y) + 20; y++) {
+            let b = getBlockGlobal(wx, y, wz);
+            if (b !== BLOCKS.AIR && b !== BLOCKS.WATER && b !== BLOCKS.LEAVES) { isSheltered = true; break; }
+        }
+    }
+
     // Weather
-    updateRain(delta, camera.position);
+    updateRain(delta, camera.position, isSheltered);
     if (time - lastWeatherChange > 30000) {
         let rolled = Math.random();
-        if (rolled < 0.05) { // 5% chance to toggle
+        if (rolled < 0.05) { 
             if (!isRaining) { isRaining = true; isStorming = Math.random() < 0.3; }
             else { isRaining = false; isStorming = false; }
             if (isRaining) initRainAudio();
@@ -1313,32 +1318,34 @@ function animate() {
     if (isStorming && isRaining) {
         if (time > nextLightningTime) {
             lightningLevel = 1.0;
-            // Flicker effect
             setTimeout(() => { lightningLevel = 0.8; }, 50);
             setTimeout(() => { lightningLevel = 1.0; }, 100);
-            
-            // Random thunder delay
             let delay = 500 + Math.random() * 2500;
             setTimeout(() => { playThunder(delay / 1000); }, delay);
-            
             nextLightningTime = time + 5000 + Math.random() * 15000;
         }
     }
-    if (lightningLevel > 0) lightningLevel -= delta * 5.0; // Quick fade
+    if (lightningLevel > 0) lightningLevel -= delta * 5.0; 
     if (lightningLevel < 0.01) lightningLevel = 0;
 
     // Atmosphere
     let stormGloom = isStorming ? 0.3 : 1.0;
     let gloom = (1.0 - (rainIntensity * 0.45)) * stormGloom;
-    ambientLight.intensity = (0.4 * gloom) + (lightningLevel * 2.0);
-    dirLight.intensity = (0.8 * gloom) + (lightningLevel * 1.5);
+    
+    // Modulate lightning for player view
+    let viewLightning = lightningLevel;
+    if (isDeep) viewLightning = 0;
+    else if (isSheltered) viewLightning *= 0.15; // faint flash entering building
+
+    ambientLight.intensity = (0.4 * gloom) + (viewLightning * 2.0);
+    dirLight.intensity = (0.8 * gloom) + (viewLightning * 1.5);
     
     const baseFogColor = new THREE.Color(dayNess > 0 ? 0x87CEEB : 0x0a0a1a);
     const rainFogColor = new THREE.Color(isStorming ? 0x111122 : 0x444455);
     const lightningColor = new THREE.Color(0xffffff);
 
     let finalFogColor = baseFogColor.clone().lerp(rainFogColor, rainIntensity);
-    if (lightningLevel > 0) finalFogColor.lerp(lightningColor, lightningLevel * 0.8);
+    if (viewLightning > 0) finalFogColor.lerp(lightningColor, viewLightning * 0.8);
 
     scene.fog.color.copy(finalFogColor);
     scene.background.copy(scene.fog.color);
