@@ -1346,7 +1346,7 @@ function animate() {
             { g: new THREE.Color(0x66cc66), l: new THREE.Color(0xffaac0) }, // Spring (Pink Blossom)
             { g: new THREE.Color(0x50b450), l: new THREE.Color(0x287828) }, // Summer (Lush)
             { g: new THREE.Color(0xb09040), l: new THREE.Color(0xe05010) }, // Autumn (Golden/Orange)
-            { g: new THREE.Color(0xffffff), l: new THREE.Color(0xffffff) }  // Winter (Snow)
+            { g: new THREE.Color(0xffffff), l: new THREE.Color(0xe05010) }  // Winter (Snow on ground, Gold leaves)
         ];
         let c1 = seasonColors[currentSeason];
         let c2 = seasonColors[(currentSeason + 1) % 4];
