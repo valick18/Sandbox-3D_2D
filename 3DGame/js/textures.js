@@ -86,29 +86,29 @@ export function generateMaterials() {
         return [c[0] + vary + clumps, c[1] + vary + clumps, c[2] + vary + clumps];
     });
 
-    // Grass Top - rich pattern
+    // Grass Top - greyscale base for seasonal tinting
     materials[BLOCKS.GRASS] = createCanvasTex(BLOCKS.GRASS, (x, y) => {
         let nx = (x / 64) * Math.PI * 2;
         let ny = (y / 64) * Math.PI * 2;
         let vary = (Math.random() - 0.5) * 15;
         let pattern = Math.sin(nx * 4) * Math.sin(ny * 4) * 25 + Math.cos(nx * 7 + ny * 10) * 10;
-        let c = BASE_COLORS[BLOCKS.GRASS];
-        return [c[0] + vary + pattern, c[1] + vary + pattern + 10, c[2] + vary + pattern];
+        // Grey base so main.js can tint it perfectly
+        let grey = 200 + vary + pattern;
+        return [grey, grey, grey];
     });
 
-    // Grass Side - smooth transition
+    // Grass Side - greyscale top part for tinting
     materials[100] = createCanvasTex(100, (x, y) => {
         let nx = (x / 64) * Math.PI * 2;
-        let ny = (y / 64) * Math.PI * 2;
         let drop = 20 + Math.sin(nx * 3) * 6 + Math.cos(nx * 7) * 4;
         let vary = (Math.random() - 0.5) * 20;
         if (y < drop) {
-            let c = BASE_COLORS[BLOCKS.GRASS];
             let grad = (drop - y) / drop;
-            return [c[0] * grad + 20 + vary, c[1] * grad + 60 + vary, c[2] * grad + 20 + vary];
+            let grey = 200 * grad + 20 + vary;
+            return [grey, grey, grey];
         } else {
             let c = BASE_COLORS[BLOCKS.DIRT];
-            let clumps = Math.sin(nx * 5) * Math.cos(ny * 5) * 15;
+            let clumps = Math.sin(nx * 5) * Math.cos(ny * 103 % 6.28) * 15; // fixed clumps lookup
             return [c[0] + vary + clumps, c[1] + vary + clumps, c[2] + vary + clumps];
         }
     });
