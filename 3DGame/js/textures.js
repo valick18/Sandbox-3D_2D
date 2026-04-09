@@ -92,12 +92,12 @@ export function generateMaterials() {
         let ny = (y / 64) * Math.PI * 2;
         let vary = (Math.random() - 0.5) * 15;
         let pattern = Math.sin(nx * 4) * Math.sin(ny * 4) * 25 + Math.cos(nx * 7 + ny * 10) * 10;
-        // Grey base so main.js can tint it perfectly
-        let grey = 200 + vary + pattern;
+        // Even whiter snow base (increased from 200 to 240)
+        let grey = 240 + vary + pattern;
         return [grey, grey, grey];
     });
 
-    // Grass Side - greyscale top part for tinting
+    // Grass Side - whiter top part for tinting
     materials[100] = createCanvasTex(100, (x, y) => {
         let nx = (x / 64) * Math.PI * 2;
         let ny = (y / 64) * Math.PI * 2;
@@ -105,7 +105,7 @@ export function generateMaterials() {
         let vary = (Math.random() - 0.5) * 20;
         if (y < drop) {
             let grad = (drop - y) / drop;
-            let grey = 200 * grad + 20 + vary;
+            let grey = 230 * grad + 25 + vary; // Arctic white
             return [grey, grey, grey];
         } else {
             let c = BASE_COLORS[BLOCKS.DIRT];

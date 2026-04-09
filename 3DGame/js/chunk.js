@@ -164,11 +164,12 @@ export class Chunk {
                             }
                         }
                     } else {
-                        // Regular Flora (Flowers/Grass) - random noise based
+                        // Scattering: Use coordinates to prevent clustering
                         if (this.data[this.getIndex(x, surfaceY, z)] === BLOCKS.GRASS && surfaceY < CHUNK_HEIGHT - 1) {
-                            let floraProb = Math.sin(wx * 0.13 + wz * 0.27) * 0.5 + 0.5;
-                            if (floraProb > 0.85) {
-                                let type = Math.sin(wx * 1.5 + wz * 0.4) * 0.5 + 0.5;
+                            // Only spawn if coordinates match a sparse grid (e.g. 5x4)
+                            let isScatterSpot = (wx % 5 === 0 && wz % 4 === 0) || (wx % 9 === 0 && wz % 7 === 0);
+                            if (isScatterSpot && Math.random() < 0.7) {
+                                let type = Math.sin(wx * 2.1 + wz * 1.3) * 0.5 + 0.5;
                                 let block = BLOCKS.TALL_GRASS;
                                 if (type > 0.8) block = BLOCKS.FLOWER_RED;
                                 else if (type > 0.6) block = BLOCKS.FLOWER_YELLOW;
