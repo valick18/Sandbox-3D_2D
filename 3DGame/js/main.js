@@ -6,7 +6,15 @@ import { Mob, mobsList } from './mobs.js';
 import { setSeed } from './math.js';
 
 let camera, scene, renderer, controls;
-let chunks = {};
+window.chunks = {};
+let chunks = window.chunks;
+
+const VIEW_DISTANCE = 8;
+let chunkQueue = [];
+let lastPlayerChunkX = null;
+let lastPlayerChunkZ = null;
+
+let clouds = [];
 
 let velocity = new THREE.Vector3();
 let direction = new THREE.Vector3();
@@ -18,6 +26,7 @@ const keys = {};
 let prevTime = performance.now();
 let raycaster, center;
 let craftingMode = 'none'; // 'none', 'basic', 'workbench', 'chest'
+let isChatOpen = false;
 
 // ----------------- INVENTORY & CRAFTING -----------------
 const BLOCK_NAMES = {1:'Grass', 2:'Dirt', 3:'Stone', 4:'Wood', 5:'Leaves', 6:'Sand', 7:'Planks', 8:'Meat', 9:'Workbench', 10:'Chest'};
@@ -275,9 +284,22 @@ function updateChestUI() {
 // ---------------------------------------------------------
 
 // Day / Night cycle
-let gameTime = Math.PI / 2; // start at noon
+let gameTime = parseFloat(localStorage.getItem('sandbox3d_gameTime')) || (Math.PI / 2); // start at noon
 let dirLight, ambientLight;
 let sunMesh, moonMesh, starsMesh;
+
+// Ambient Background Sounds
+let ambientDayTracks = [
+    new Audio('audio/ambient_day.mp3'),
+    new Audio('audio/ambient_day_2.mp3')
+];
+ambientDayTracks.forEach(t => { t.loop = true; t.volume = 0; });
+let currentDayTrackIndex = Math.floor(Math.random() * ambientDayTracks.length);
+let wasDay = false;
+
+let ambientNightAudio = new Audio('audio/ambient_night.mp3');
+ambientNightAudio.loop = true;
+ambientNightAudio.volume = 0;
 
 // Audio context
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -352,7 +374,7 @@ document.addEventListener('contextmenu', e => e.preventDefault());
 function init() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x87CEEB);
-    scene.fog = new THREE.Fog(0x87CEEB, 20, 60); // Depth fog
+    scene.fog = new THREE.Fog(0x87CEEB, 20, 100); // 100 is ~6 chunks, chunks generate at 8+ hiding the popping
     
     // Lighting
     ambientLight = new THREE.AmbientLight(0xcccccc, 0.4);
@@ -370,13 +392,25 @@ function init() {
     generateMaterials();
     
     // Sky Bodies
-    const sunGeom = new THREE.SphereGeometry(8, 16, 16);
-    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffffdd, fog: false, transparent: true });
+    const sunGeom = new THREE.SphereGeometry(20, 16, 16);
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffeb3b, fog: false, transparent: true, depthWrite: true });
     sunMesh = new THREE.Mesh(sunGeom, sunMat);
     sunMesh.userData = { ignoreRaycast: true };
+    
+    // Sun Glow Aura
+    const sunGlowGeom = new THREE.SphereGeometry(25, 16, 16);
+    const sunGlowMat = new THREE.MeshBasicMaterial({ 
+        color: 0xfff59d, 
+        transparent: true, 
+        opacity: 0.3, 
+        fog: false 
+    });
+    const sunGlow = new THREE.Mesh(sunGlowGeom, sunGlowMat);
+    sunMesh.add(sunGlow);
+    
     scene.add(sunMesh);
     
-    const moonMat = new THREE.MeshBasicMaterial({ color: 0xddddff, fog: false, transparent: true });
+    const moonMat = new THREE.MeshBasicMaterial({ color: 0xddddff, fog: false, transparent: true, depthWrite: true });
     moonMesh = new THREE.Mesh(sunGeom, moonMat);
     moonMesh.userData = { ignoreRaycast: true };
     scene.add(moonMesh);
@@ -385,17 +419,33 @@ function init() {
     const starGeom = new THREE.BufferGeometry();
     const starPos = [];
     for(let i=0; i<1500; i++) {
-        starPos.push((Math.random()-0.5)*400, (Math.random()-0.5)*400, (Math.random()-0.5)*400);
+        // Correct spherical distribution to ensure they are ALWAYS far away and behind terrain
+        const r = 700 + Math.random() * 100;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        starPos.push(
+            r * Math.sin(phi) * Math.cos(theta),
+            r * Math.sin(phi) * Math.sin(theta),
+            r * Math.cos(phi)
+        );
     }
     starGeom.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
-    const starMat = new THREE.PointsMaterial({color: 0xffffff, size: 0.8, transparent: true, opacity: 0});
+    const starMat = new THREE.PointsMaterial({
+        color: 0xffffff, 
+        size: 2.5, 
+        sizeAttenuation: false, 
+        transparent: true, 
+        opacity: 0, 
+        depthWrite: false,
+        fog: false
+    });
     starsMesh = new THREE.Points(starGeom, starMat);
     starsMesh.userData = { ignoreRaycast: true };
     scene.add(starsMesh);
     
-    // Build initial chunks (Expanded Map Size)
-    for (let cx = -7; cx <= 7; cx++) {
-        for (let cz = -7; cz <= 7; cz++) {
+    // Build initial central chunks synchronously so player doesn't fall through
+    for (let cx = -2; cx <= 2; cx++) {
+        for (let cz = -2; cz <= 2; cz++) {
             chunks[`${cx},${cz}`] = new Chunk(cx, cz, scene, materials);
         }
     }
@@ -441,16 +491,50 @@ function init() {
     
     updateInventoryUI();
     
+    initClouds();
+
     controls = new PointerLockControls(camera, document.body);
     
     craftingMode = 'none'; 
     const craftingMenu = document.getElementById('crafting');
 
     const instructions = document.getElementById('instructions');
-    
+    const chatContainer = document.getElementById('chat-container');
+    const chatInput = document.getElementById('chat-input');
+    const chatLog = document.getElementById('chat-log');
+
+    function addChatMessage(msg) {
+        const div = document.createElement('div');
+        div.textContent = msg;
+        chatLog.appendChild(div);
+        chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    function processCommand(cmd) {
+        const c = cmd.toLowerCase().trim();
+        if (c === '/day') {
+            gameTime = Math.PI / 2;
+            addChatMessage("Time set to Day");
+        } else if (c === '/night') {
+            gameTime = Math.PI * 1.5;
+            addChatMessage("Time set to Night");
+        } else if (c === '/help') {
+            addChatMessage("Available commands:");
+            addChatMessage("/day - Set time to day");
+            addChatMessage("/night - Set time to night");
+            addChatMessage("/help - Show this list");
+        } else if (c.startsWith('/')) {
+            addChatMessage("Unknown command. Type /help for list.");
+        }
+    }
+
     controls.addEventListener('lock', () => {
         instructions.style.display = 'none';
+        chatContainer.style.display = 'none';
+        isChatOpen = false;
         if(audioCtx.state === 'suspended') audioCtx.resume();
+        ambientDayTracks.forEach(t => t.play().catch(e => console.log('Audio play error:', e)));
+        ambientNightAudio.play().catch(e => console.log('Audio play error:', e));
     });
     
     // Instantly cut off mouse processing on ESC to prevent browser's exit-lock mousemove jump
@@ -468,6 +552,8 @@ function init() {
         if (craftingMode === 'none') {
             instructions.style.display = 'flex';
         }
+        ambientDayTracks.forEach(t => t.pause());
+        ambientNightAudio.pause();
     });
     
     scene.add(controls.getObject());
@@ -504,7 +590,17 @@ function init() {
                 break;
             case 'KeyE':
                 if (!controls.isLocked) return;
-                // ... rest of E handler handled below ...
+                break;
+            case 'Enter':
+            case 'Slash':
+                if (!isChatOpen) {
+                    isChatOpen = true;
+                    controls.unlock();
+                    chatContainer.style.display = 'block';
+                    chatInput.value = (event.code === 'Slash' ? '/' : '');
+                    setTimeout(() => chatInput.focus(), 10);
+                }
+                break;
         }
     };
 
@@ -589,6 +685,22 @@ function init() {
         }
     };
 
+    chatInput.addEventListener('keydown', (e) => {
+        if (e.code === 'Enter') {
+            const val = chatInput.value;
+            if (val) processCommand(val);
+            chatInput.value = '';
+            chatContainer.style.display = 'none';
+            isChatOpen = false;
+            controls.lock();
+        }
+        if (e.code === 'Escape' && isChatOpen) {
+            chatContainer.style.display = 'none';
+            isChatOpen = false;
+            controls.lock();
+        }
+    });
+
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
     
@@ -642,7 +754,20 @@ function init() {
                 // Break block
                 let blockId = getBlockGlobal(targetX, targetY, targetZ);
                 if (blockId !== BLOCKS.AIR && blockId !== BLOCKS.WATER) {
-                    setBlockGlobal(targetX, targetY, targetZ, BLOCKS.AIR);
+                    let replacement = BLOCKS.AIR;
+                    if (targetY <= 58) {
+                        // Check neighbors; if any is water, fill this hole with water
+                        let u = getBlockGlobal(targetX, targetY + 1, targetZ);
+                        let l = getBlockGlobal(targetX - 1, targetY, targetZ);
+                        let r = getBlockGlobal(targetX + 1, targetY, targetZ);
+                        let f = getBlockGlobal(targetX, targetY, targetZ + 1);
+                        let b = getBlockGlobal(targetX, targetY, targetZ - 1);
+                        if (u === BLOCKS.WATER || l === BLOCKS.WATER || r === BLOCKS.WATER || f === BLOCKS.WATER || b === BLOCKS.WATER) {
+                            replacement = BLOCKS.WATER;
+                        }
+                    }
+                    
+                    setBlockGlobal(targetX, targetY, targetZ, replacement);
                     inventory.addItem(blockId, 1);
                     // Standardize drops
                     if (blockId === BLOCKS.CHEST) {
@@ -826,10 +951,105 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
+function initClouds() {
+    const cloudGeo = new THREE.BoxGeometry(1, 1, 1);
+    const cloudMat = new THREE.MeshLambertMaterial({ 
+        color: 0xffffff, 
+        transparent: true, 
+        opacity: 0.5,
+        side: THREE.DoubleSide
+    });
+    
+    for (let i = 0; i < 100; i++) {
+        const mesh = new THREE.Mesh(cloudGeo, cloudMat);
+        
+        // Much smaller, flat shapes (reduced by 5x)
+        const w = 12 + Math.random() * 16; 
+        const h = 1.2;
+        const d = 6 + Math.random() * 8;
+        mesh.scale.set(w, h, d);
+        
+        mesh.position.set(
+            (Math.random() - 0.5) * 1200, 
+            110, // Fixed height for a single layer
+            (Math.random() - 0.5) * 1200
+        );
+        
+        mesh.userData = { ignoreRaycast: true };
+        scene.add(mesh);
+        clouds.push({
+            mesh: mesh,
+            vx: 1 + Math.random() * 1.5,
+            vz: (Math.random() - 0.5) * 0.3
+        });
+    }
+}
+
+function updateClouds(delta, px, pz) {
+    const range = 800;
+    clouds.forEach(c => {
+        c.mesh.position.x += c.vx * delta;
+        c.mesh.position.z += c.vz * delta;
+        
+        // Wrap around player
+        if (c.mesh.position.x - px > range) c.mesh.position.x -= range * 2;
+        if (c.mesh.position.x - px < -range) c.mesh.position.x += range * 2;
+        if (c.mesh.position.z - pz > range) c.mesh.position.z -= range * 2;
+        if (c.mesh.position.z - pz < -range) c.mesh.position.z += range * 2;
+    });
+}
+
+function updateDynamicChunks() {
+    if (!camera) return;
+    let px = Math.floor(camera.position.x / CHUNK_SIZE);
+    let pz = Math.floor(camera.position.z / CHUNK_SIZE);
+
+    // If player moved to a new chunk, recalculate render queue
+    if (px !== lastPlayerChunkX || pz !== lastPlayerChunkZ) {
+        lastPlayerChunkX = px;
+        lastPlayerChunkZ = pz;
+        
+        chunkQueue = [];
+        for (let cx = px - VIEW_DISTANCE; cx <= px + VIEW_DISTANCE; cx++) {
+            for (let cz = pz - VIEW_DISTANCE; cz <= pz + VIEW_DISTANCE; cz++) {
+                let dist = Math.hypot(cx - px, cz - pz);
+                if (dist <= VIEW_DISTANCE) {
+                    if (!chunks[`${cx},${cz}`]) {
+                        chunkQueue.push({ cx, cz, dist });
+                    }
+                }
+            }
+        }
+        // Sort closest first
+        chunkQueue.sort((a, b) => a.dist - b.dist);
+
+        // Unload chunks far away
+        const unloadDist = VIEW_DISTANCE + 1.5;
+        for (let key in chunks) {
+            let chunk = chunks[key];
+            if (Math.hypot(chunk.chunkX - px, chunk.chunkZ - pz) > unloadDist) {
+                chunk.dispose();
+                delete chunks[key];
+            }
+        }
+    }
+
+    // Process chunk queue (1 per frame to prevent lag)
+    if (chunkQueue.length > 0) {
+        let job = chunkQueue.shift();
+        if (!chunks[`${job.cx},${job.cz}`]) {
+            chunks[`${job.cx},${job.cz}`] = new Chunk(job.cx, job.cz, scene, materials);
+        }
+    }
+}
+
 function animate() {
     requestAnimationFrame(animate);
 
     const time = performance.now();
+    
+    // Process infinite world generation
+    updateDynamicChunks();
 
     // Debug View Check
     if (controls.isLocked === true) {
@@ -850,7 +1070,7 @@ function animate() {
     }
 
     // Only allow player movement and interactions if no UI is open
-    if (controls.isLocked === true) {
+    if (controls.isLocked === true && !isChatOpen) {
         const delta = Math.min((time - prevTime) / 1000, 0.1); // clamp delta
         
         // Update Day/Night Cycle
@@ -858,18 +1078,78 @@ function animate() {
         let speed = isDay ? (Math.PI / 900) : (Math.PI / 600); // Day: 15m, Night: 10m
         gameTime += delta * speed;
         let sunAngle = gameTime;
+        
+        let dayNess = Math.sin(sunAngle); // 1 = noon, 0 = dusk, -1 = midnight
+
+        // Update clouds
+        updateClouds(delta, camera.position.x, camera.position.z);
+        // Clean East-to-West trajectory
         let sunDist = 350;
-        dirLight.position.set(Math.cos(sunAngle)*sunDist, Math.sin(sunAngle)*sunDist, Math.sin(sunAngle*0.2)*50);
+        let tilt = 40; // Slight southern tilt for aesthetics
+        dirLight.position.set(
+            Math.cos(sunAngle) * sunDist, // East-West
+            Math.sin(sunAngle) * sunDist, // Up-Down
+            tilt                           // Fixed tilt
+        );
         
         sunMesh.position.copy(dirLight.position).add(camera.position);
         moonMesh.position.set(-dirLight.position.x, -dirLight.position.y, -dirLight.position.z).add(camera.position);
         starsMesh.position.copy(camera.position);
-        
-        let dayNess = Math.sin(sunAngle); // 1 = noon, 0 = dusk, -1 = midnight
 
         // Fade celestial bodies near horizon to prevent seeing them through the maps bottom
         sunMesh.material.opacity = Math.max(0, Math.min(1, dayNess * 5));
         moonMesh.material.opacity = Math.max(0, Math.min(1, -dayNess * 5));
+        
+        // Star visibility logic (strictly zero during day)
+        starsMesh.material.opacity = dayNess > 0 ? 0 : Math.min(1.0, -dayNess * 2.0);
+
+        // Music Playlist Switcher (on each sunrise)
+        if (dayNess > 0 && !wasDay) {
+            currentDayTrackIndex = Math.floor(Math.random() * ambientDayTracks.length);
+        }
+        wasDay = (dayNess > 0);
+
+        // Save time periodically (every 5 seconds)
+        if (Math.floor(time / 5000) !== Math.floor(prevTime / 5000)) {
+            localStorage.setItem('sandbox3d_gameTime', gameTime);
+        }
+
+        // Sun Glare Effect
+        const glareOverlay = document.getElementById('sun-glare');
+        if (dayNess > 0) {
+            const sunPos = sunMesh.position.clone().sub(camera.position).normalize();
+            const camDir = new THREE.Vector3();
+            camera.getWorldDirection(camDir);
+            const lookDot = camDir.dot(sunPos);
+
+            if (lookDot > 0.95) {
+                // Check occlusion
+                const sunRay = new THREE.Raycaster(camera.position, sunPos, 0, 400);
+                const blocksOnly = scene.children.filter(o => !o.userData.ignoreRaycast);
+                const hits = sunRay.intersectObjects(blocksOnly);
+                
+                if (hits.length === 0) {
+                    const power = (lookDot - 0.95) / 0.05; // 0..1
+                    glareOverlay.style.opacity = power * 0.45;
+                } else {
+                    glareOverlay.style.opacity = 0;
+                }
+            } else {
+                glareOverlay.style.opacity = 0;
+            }
+        } else {
+            glareOverlay.style.opacity = 0;
+        }
+
+        // Dynamically adjust ambient audio volume
+        ambientDayTracks.forEach((track, idx) => {
+            if (idx === currentDayTrackIndex) {
+                track.volume = Math.max(0, Math.min(1, dayNess * 0.15));
+            } else {
+                track.volume = 0;
+            }
+        });
+        ambientNightAudio.volume = Math.max(0, Math.min(1, -dayNess * 0.15));
 
         // Detect Water
         let feetBlock = getBlockGlobal(
@@ -903,8 +1183,8 @@ function animate() {
              ambientLight.intensity = Math.max(0.1, dayNess * 0.4);
              starsMesh.material.opacity = 0;
         } else {
-            scene.fog.near = 10;
-            scene.fog.far = 80;
+            scene.fog.near = 15;
+            scene.fog.far = 100;
             
             if (dayNess > 0) {
                 // Day
@@ -1025,7 +1305,7 @@ function animate() {
         
         // Procedural Footstep Audio — only when truly moving, not just pressing against a wall
         const isMoving = moveForward || moveBackward || moveLeft || moveRight;
-        if (canJump && isMoving && (realDx + realDz) > 0.001) {
+        if (!flyMode && canJump && isMoving && (realDx + realDz) > 0.001 && !inWater) {
             if (!window.footstepTimer) window.footstepTimer = 0.3;
             window.footstepTimer -= delta;
             if (window.footstepTimer <= 0) {

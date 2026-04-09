@@ -42,6 +42,12 @@
             <h2>Inventory</h2>
             <div id="player-grid"></div>
         </div>
+        
+        <div id="chat-container" style="display:none; position:absolute; bottom:100px; left:20px; width:400px; pointer-events:auto;">
+            <div id="chat-log" style="max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.5); color:white; padding:10px; border-radius:4px; font-family:monospace; font-size:14px; margin-bottom:5px; pointer-events:none;"></div>
+            <input type="text" id="chat-input" placeholder="Type command... /help" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.8); border:1px solid #777; color:white; padding:8px; border-radius:4px; outline:none;">
+        </div>
+        <div id="sun-glare" style="position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; background:white; opacity:0; z-index:100; transition: opacity 0.1s linear;"></div>
     </div>
     <script type="module" src="js/main.js"></script>
 </body>

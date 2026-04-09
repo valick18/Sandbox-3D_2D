@@ -205,6 +205,11 @@ export class Mob {
     }
 
     update(delta, playerPos) {
+        // Check if chunk is loaded. If not, freeze physics to prevent falling out.
+        let cx = Math.floor(this.group.position.x / 16);
+        let cz = Math.floor(this.group.position.z / 16);
+        if (window.chunks && !window.chunks[`${cx},${cz}`]) return; 
+
         // Respawn on surface if fell off the world
         if(this.group.position.y < -30) {
             // Find a surface position near where the mob was

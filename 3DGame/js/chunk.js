@@ -396,7 +396,23 @@ export class Chunk {
             
             this.waterMesh = new THREE.Mesh(wGeom, this.materialArray[BLOCKS.WATER]);
             this.waterMesh.position.set(this.chunkX * CHUNK_SIZE, 0, this.chunkZ * CHUNK_SIZE);
+            this.waterMesh.userData = { ignoreRaycast: true };
             this.scene.add(this.waterMesh);
         }
+    }
+
+    dispose() {
+        if (this.mesh) {
+            this.scene.remove(this.mesh);
+            if (this.mesh.geometry) this.mesh.geometry.dispose();
+            this.mesh = null;
+        }
+        if (this.waterMesh) {
+            this.scene.remove(this.waterMesh);
+            if (this.waterMesh.geometry) this.waterMesh.geometry.dispose();
+            this.waterMesh = null;
+        }
+        // Free data array
+        this.data = null;
     }
 }
