@@ -16,7 +16,8 @@ export const BLOCKS = {
     CACTUS: 12,
     FLOWER_RED: 13,
     FLOWER_YELLOW: 14,
-    TALL_GRASS: 15
+    TALL_GRASS: 15,
+    SNOW_LAYER: 16
 };
 
 // Colors for each block
@@ -284,6 +285,13 @@ export function generateMaterials() {
         if (x % 16 < 2) return [c[0] - 30 + vary, c[1] - 30 + vary, c[2] - 30 + vary];
         if (Math.random() < 0.05) return [200, 200, 150]; // pale spike
         return [c[0] + vary, c[1] + vary, c[2] + vary];
+    });
+
+    // Snow Layer - pure white
+    materials[BLOCKS.SNOW_LAYER] = createCanvasTex(BLOCKS.SNOW_LAYER, (x, y) => {
+        let vary = (Math.random() - 0.5) * 5;
+        let c = 255 + vary;
+        return [c, c, c];
     });
 
     // --- FLORA (Flowers & Tall Grass) ---

@@ -758,6 +758,15 @@ function init() {
             addChatMessage("A storm is coming!");
             initRainAudio();
             initBlizzardAudio();
+        } else if (c === '/snow') {
+            if (currentSeason !== SEASONS.WINTER) {
+                addChatMessage("It's too warm for snow!");
+            } else {
+                isRaining = !isRaining;
+                isStorming = false;
+                addChatMessage(isRaining ? "Heavy snow begins..." : "The snowfall stops.");
+                initBlizzardAudio();
+            }
         } else if (c === '/spring') {
             gameTime = (0 * 10) * Math.PI * 2 + (Math.PI / 4);
             addChatMessage("Spring breeze fills the air...");
@@ -1372,6 +1381,10 @@ function animate() {
         if (materials[BLOCKS.FLOWER_YELLOW]) {
              materials[BLOCKS.FLOWER_YELLOW].visible = (currentSeason !== SEASONS.WINTER);
         }
+        if (materials[BLOCKS.SNOW_LAYER]) {
+             // Keep snow layer pure white
+             materials[BLOCKS.SNOW_LAYER].color.set(0xffffff);
+        }
     }
 
     // Update clouds
@@ -1425,6 +1438,25 @@ function animate() {
             if (isRaining) initRainAudio();
         }
         lastWeatherChange = time;
+    }
+
+    // Snow Accumulation Logic
+    if (isRaining && currentSeason === SEASONS.WINTER && !isStorming) {
+        // Randomly pick a few blocks near player to try and cover with snow
+        for (let i = 0; i < 3; i++) {
+             let rx = Math.floor(camera.position.x + (Math.random() - 0.5) * 40);
+             let rz = Math.floor(camera.position.z + (Math.random() - 0.5) * 40);
+             let ry = getSurfaceY(rx, rz);
+             
+             // If surface is grass/dirt and air above
+             let baseBlock = getBlockGlobal(rx, ry - 1, rz);
+             let topBlock = getBlockGlobal(rx, ry, rz);
+             if (topBlock === BLOCKS.AIR && (baseBlock === BLOCKS.GRASS || baseBlock === BLOCKS.DIRT)) {
+                 if (Math.random() < 0.05) { // Slow accumulation
+                     setBlockGlobal(rx, ry, rz, BLOCKS.SNOW_LAYER);
+                 }
+             }
+        }
     }
 
     // Storm Lightning Logic

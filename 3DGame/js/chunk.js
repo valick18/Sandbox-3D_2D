@@ -374,6 +374,21 @@ export class Chunk {
                                         mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
                                     }
                                 }
+                            } else if (blockId === BLOCKS.SNOW_LAYER) {
+                                // Special Snow Layer: Thin quad at the top
+                                if (index === 0) { // Only one quad
+                                    if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
+                                    let mf = solidFaces[matId];
+                                    let startV = mf.pos.length / 3;
+                                    const tileHeight = 0.05; // Slightly offset to avoid Z-fighting
+                                    const snowPlane = [[0, tileHeight, 0], [1, tileHeight, 0], [1, tileHeight, 1], [0, tileHeight, 1]];
+                                    for (let i=0; i<4; i++) {
+                                        mf.pos.push(x + snowPlane[i][0], y + snowPlane[i][1], z + snowPlane[i][2]);
+                                        mf.norm.push(0, 1, 0);
+                                        mf.uv.push(uvSeq[i][0], uvSeq[i][1]);
+                                    }
+                                    mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
+                                }
                             } else {
                                 if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
                                 let mf = solidFaces[matId];
