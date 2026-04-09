@@ -400,17 +400,35 @@ function init() {
         }
     }
 
-    // Spawn Mobs (wrapped in try-catch so errors don't abort init)
+    // Spawn Mobs after chunks are built — find valid surface positions
     try {
-        for(let i=0; i<4; i++) new Mob(scene, getBlockGlobal, false); // Rabbit
-        for(let i=0; i<2; i++) new Mob(scene, getBlockGlobal, true); // Deer
+        spawnMobsOnSurface(scene);
     } catch(e) {
         console.error('Mob spawn error:', e);
     }
 
-    // Snap player to surface to prevent spawning underground
+    // Find a dry spawn point (not in water) within radius 40
+    let spawnX = 0, spawnZ = 0;
+    outer:
+    for (let r = 0; r <= 40; r += 2) {
+        for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / (r === 0 ? 1 : r + 1)) {
+            let tx = r === 0 ? 0 : Math.round(Math.cos(angle) * r);
+            let tz = r === 0 ? 0 : Math.round(Math.sin(angle) * r);
+            let topBlock = BLOCKS.AIR;
+            for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+                let b = getBlockGlobal(tx, y, tz);
+                if (b !== BLOCKS.AIR) { topBlock = b; break; }
+            }
+            if (topBlock !== BLOCKS.WATER && topBlock !== BLOCKS.AIR) {
+                spawnX = tx; spawnZ = tz; break outer;
+            }
+        }
+    }
+    // Snap player to that surface
+    camera.position.x = spawnX + 0.5;
+    camera.position.z = spawnZ + 0.5;
     for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
-        if (getBlockGlobal(0, y, 0) !== BLOCKS.AIR) {
+        if (getBlockGlobal(spawnX, y, spawnZ) !== BLOCKS.AIR) {
             camera.position.y = y + 3;
             break;
         }
@@ -707,10 +725,12 @@ function init() {
 }
 
 function setBlockGlobal(bx, by, bz, blockId) {
+    // Correct chunk/local coordinate mapping for negative world coords
     let cx = Math.floor(bx / CHUNK_SIZE);
     let cz = Math.floor(bz / CHUNK_SIZE);
-    let lx = bx - cx * CHUNK_SIZE;
-    let lz = bz - cz * CHUNK_SIZE;
+    // Use modulo to always get 0..CHUNK_SIZE-1 (JS % can be negative)
+    let lx = ((bx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    let lz = ((bz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
     
     if (!window.modifiedBlocks) window.modifiedBlocks = {};
     window.modifiedBlocks[`${bx},${by},${bz}`] = blockId;
@@ -731,15 +751,48 @@ function setBlockGlobal(bx, by, bz, blockId) {
 }
 
 function getBlockGlobal(bx, by, bz) {
+    // Correct chunk mapping for negative coords
     let cx = Math.floor(bx / CHUNK_SIZE);
     let cz = Math.floor(bz / CHUNK_SIZE);
-    let lx = bx - cx * CHUNK_SIZE;
-    let lz = bz - cz * CHUNK_SIZE;
+    let lx = ((bx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    let lz = ((bz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
     let chunk = chunks[`${cx},${cz}`];
     if(chunk) return chunk.getBlock(lx, by, lz);
     return by <= 58 ? BLOCKS.WATER : BLOCKS.AIR;
 }
 window.getBlockGlobal = getBlockGlobal;
+
+// Find surface Y at a world X/Z position (top solid non-water block)
+function getSurfaceY(wx, wz) {
+    for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+        let b = getBlockGlobal(wx, y, wz);
+        if (b !== BLOCKS.AIR && b !== BLOCKS.WATER) {
+            return y + 1; // stand ON TOP of this block
+        }
+    }
+    return 65; // fallback above water level
+}
+
+// Spawn mobs at valid surface positions (not floating in air, not underground)
+function spawnMobsOnSurface(scene) {
+    const mobConfigs = [
+        { count: 4, isDeer: false },
+        { count: 2, isDeer: true },
+    ];
+    for (let cfg of mobConfigs) {
+        for (let i = 0; i < cfg.count; i++) {
+            // Pick a random spot within loaded world, away from origin
+            let angle = Math.random() * Math.PI * 2;
+            let dist  = 20 + Math.random() * 60;
+            let wx = Math.floor(Math.cos(angle) * dist);
+            let wz = Math.floor(Math.sin(angle) * dist);
+            let wy = getSurfaceY(wx, wz);
+            let mob = new Mob(scene, getBlockGlobal, cfg.isDeer);
+            // Place slightly above surface so gravity settles them gently
+            mob.group.position.set(wx + 0.5, wy + 0.5, wz + 0.5);
+        }
+    }
+}
 
 // Complete AABB Box checking logic
 function checkAABB(px, py, pz) {

@@ -165,14 +165,17 @@ export class Mob {
         this.velocity = new THREE.Vector3();
         this.health = isDeer ? 3 : 1;
 
-        // Wander AI state
-        this.wanderTimer = 1 + Math.random() * 2;
+        // Wander AI state — start moving immediately so mob finds ground fast
+        this.wanderTimer = Math.random() * 0.5; // short initial delay
         this.targetDir = new THREE.Vector3((Math.random()-0.5), 0, (Math.random()-0.5)).normalize();
-        this.isMoving = false;
+        this.isMoving = true; // start moving right away
         this.restTimer = 0;
 
         // Leg animation
         this.legPhase = 0;
+
+        // Rabbit hop cooldown timer (prevents 12 hops/sec at 60fps)
+        this.hopTimer = 0;
 
         mobsList.push(this);
     }
@@ -202,8 +205,21 @@ export class Mob {
     }
 
     update(delta, playerPos) {
-        if(this.group.position.y < -50) {
-            this.group.position.y = 80;
+        // Respawn on surface if fell off the world
+        if(this.group.position.y < -30) {
+            // Find a surface position near where the mob was
+            let rx = Math.floor(this.group.position.x);
+            let rz = Math.floor(this.group.position.z);
+            // Search for solid ground
+            let ry = 90;
+            if(window.getBlockGlobal) {
+                for(let y = 100; y >= 0; y--) {
+                    let b = window.getBlockGlobal(rx, y, rz);
+                    if(b !== 0 && b !== 11) { ry = y + 1; break; } // not AIR(0) or WATER(11)
+                }
+            }
+            this.group.position.set(rx + 0.5, ry + 1, rz + 0.5);
+            this.velocity.set(0, 0, 0);
         }
 
         let pos = this.group.position;
@@ -261,10 +277,12 @@ export class Mob {
             }
         }
 
-        // Rabbits hop
+        // Rabbits hop — use hopTimer to limit jump rate (once per ~0.5s)
         if(!this.isDeer && this.isMoving) {
-            if(this.onGround && Math.random() < 0.2) { // 20% chance to jump per frame while moving ensures rapid but grounded hops
+            this.hopTimer -= delta;
+            if(this.onGround && this.hopTimer <= 0) {
                 this.velocity.y = 6.5;
+                this.hopTimer = 0.4 + Math.random() * 0.4; // 0.4–0.8s between hops
             }
         }
 
@@ -324,27 +342,28 @@ export class Mob {
             }
         }
 
-        // ---- Swept Ground collision ----
-        // To prevent falling through the earth due to high velocity drops, check from old Y to new Y
-        let yBlockOld = Math.floor(pos.y - halfH);
-        let yBlockNew = Math.floor(ny - halfH);
+        // ---- Swept Ground collision (fall-through prevention) ----
+        // Scan every block between old feet and new feet position
+        let yFeetOld = Math.floor(pos.y - halfH);
+        let yFeetNew = Math.floor(ny  - halfH);
         let blockBelow = BLOCKS.AIR;
-        let groundYHit = yBlockNew;
-        
-        for (let yy = yBlockOld; yy >= yBlockNew; yy--) {
-            // Check bounding box area below mob
+        let groundYHit = yFeetNew;
+        let r = this.isDeer ? 0.35 : 0.18;
+
+        // Always scan at least the new position (handles yFeetOld == yFeetNew case)
+        let yStart = Math.max(yFeetOld, yFeetNew); // highest y to start scan
+        let yEnd   = Math.min(yFeetOld, yFeetNew); // lowest  y to stop
+
+        for (let yy = yStart; yy >= yEnd; yy--) {
             let isSolid = false;
-            let r = this.isDeer ? 0.35 : 0.18;
-            for (let xx = Math.floor(nx - r); xx <= Math.floor(nx + r); xx++) {
-                for (let zz = Math.floor(nz - r); zz <= Math.floor(nz + r); zz++) {
+            for (let xx = Math.floor(nx - r); xx <= Math.floor(nx + r) && !isSolid; xx++) {
+                for (let zz = Math.floor(nz - r); zz <= Math.floor(nz + r) && !isSolid; zz++) {
                     let gb = this.getBlock(xx, yy, zz);
                     if (gb !== BLOCKS.AIR && gb !== BLOCKS.WATER) isSolid = true;
                 }
             }
             if (isSolid) {
-                // If it hits solid block during falling, clamp pos to top of it.
-                // BUT if it spawned completely buried (e.g. inside a tree trunk), don't teleport it 20 blocks up.
-                // We only count it as "landing" if it fell onto it (velocity.y <= 0) and pos.y was roughly above it!
+                // Land on top of solid block only when falling (velocity.y <= 0)
                 if(this.velocity.y <= 0) {
                     blockBelow = 1;
                     groundYHit = yy;

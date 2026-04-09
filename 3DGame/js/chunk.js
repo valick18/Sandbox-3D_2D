@@ -37,66 +37,97 @@ export class Chunk {
         return this.data[this.getIndex(x, y, z)];
     }
     
+    // Helper: compute surface Y and tree spawn info for ANY world position (cross-chunk safe)
+    getTreeInfoAtWorld(wx, wz) {
+        const WATER_LEVEL = 58;
+        const TREE_GRID = 7;
+
+        let baseElev = fbm2D(wx * 0.002, wz * 0.002, 4, 0.5);
+        let temp     = fbm2D(wx * 0.004 + 100, wz * 0.004 + 100);
+        let moist    = fbm2D(wx * 0.004 - 100, wz * 0.004 - 100);
+        let baseHeight = 40 + baseElev * 32;
+        let mountainBoost = 0;
+        if (baseElev > 0.55) {
+            mountainBoost = Math.pow((baseElev - 0.55) * 2.2, 2.5) * 90;
+        }
+        let detailNoise = fbm2D(wx*0.01, wz*0.01) * 5;
+        if (baseElev > 0.55) detailNoise *= 1.0 + (baseElev - 0.55)*8;
+        let dist = Math.sqrt(wx*wx + wz*wz);
+        if (dist < 20) { baseElev = Math.min(baseElev, 0.50); mountainBoost = 0; }
+        let surfaceY = Math.floor(baseHeight + mountainBoost + detailNoise);
+
+        let isOcean    = surfaceY <= WATER_LEVEL - 4;
+        let isMountain = surfaceY > 75;
+        let isDesert   = !isOcean && !isMountain && temp > 0.6 && moist < 0.5;
+        let isSand     = isDesert || (surfaceY <= WATER_LEVEL + 2 && !isMountain); // beach sand
+        if (surfaceY < WATER_LEVEL || isOcean || isMountain || isSand) return null;
+
+        let cellX = Math.floor(wx / TREE_GRID);
+        let cellZ = Math.floor(wz / TREE_GRID);
+        let h1 = Math.sin(cellX * 127.1 + cellZ * 311.7) * 43758.5453; h1 -= Math.floor(h1);
+        let h2 = Math.sin(cellX * 269.5 + cellZ * 183.3) * 43758.5453; h2 -= Math.floor(h2);
+        let candWX = cellX * TREE_GRID + Math.floor(h1 * TREE_GRID);
+        let candWZ = cellZ * TREE_GRID + Math.floor(h2 * TREE_GRID);
+        if (wx !== candWX || wz !== candWZ) return null;
+
+        let cellProb = Math.sin(cellX * 73.47 + cellZ * 512.91) * 43758.5453;
+        cellProb -= Math.floor(cellProb);
+        if (cellProb >= 0.65) return null;
+
+        return { surfaceY, treeHeight: 4 + Math.floor(h2 * 3) };
+    }
+
     generateData() {
         let worldXOffset = this.chunkX * CHUNK_SIZE;
         let worldZOffset = this.chunkZ * CHUNK_SIZE;
         const WATER_LEVEL = 58;
+        const TREE_GRID = 7;
         
+        // ---- PASS 1: Terrain + Trunks ----
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 let wx = worldXOffset + x;
                 let wz = worldZOffset + z;
                 
-                // Base noise maps
                 let baseElev = fbm2D(wx * 0.002, wz * 0.002, 4, 0.5);
                 let temp = fbm2D(wx * 0.004 + 100, wz * 0.004 + 100);
                 let moist = fbm2D(wx * 0.004 - 100, wz * 0.004 - 100);
-
-                // Smooth base curve from Y=40 (ocean floors) to Y=72 (high plains)
-                let baseHeight = 40 + baseElev * 32; 
-                
-                // Exponential mountain boost when elevation goes past 0.55
+                let baseHeight = 40 + baseElev * 32;
                 let mountainBoost = 0;
                 if (baseElev > 0.55) {
                     mountainBoost = Math.pow((baseElev - 0.55) * 2.2, 2.5) * 90;
                 }
-                
-                // Detail noise, scaling up intensity on mountains
                 let detailNoise = fbm2D(wx*0.01, wz*0.01) * 5;
                 if (baseElev > 0.55) detailNoise *= 1.0 + (baseElev - 0.55)*8;
-                
+
+                // Flat spawn zone
+                let distFromOrigin = Math.sqrt(wx*wx + wz*wz);
+                if (distFromOrigin < 20) {
+                    baseElev = Math.min(baseElev, 0.50);
+                    mountainBoost = 0;
+                }
                 let surfaceY = Math.floor(baseHeight + mountainBoost + detailNoise);
 
-                let isOcean = surfaceY <= WATER_LEVEL - 4; // deep water
-                let isMountain = surfaceY > 75; // high elevation
-                let isDesert = !isOcean && !isMountain && temp > 0.6 && moist < 0.5;
-                let isPlains = !isOcean && !isMountain && !isDesert && moist < 0.4;
-                
+                let isOcean    = surfaceY <= WATER_LEVEL - 4;
+                let isMountain = surfaceY > 75;
+                let isDesert   = !isOcean && !isMountain && temp > 0.6 && moist < 0.5;
+                let isPlains   = !isOcean && !isMountain && !isDesert && moist < 0.4;
+
+                // Terrain blocks
                 for (let y = 0; y < CHUNK_HEIGHT; y++) {
                     let idx = this.getIndex(x, y, z);
-                    
                     if (y > surfaceY) {
-                        if (y <= WATER_LEVEL) {
-                            this.data[idx] = BLOCKS.WATER;
-                        } else {
-                            this.data[idx] = BLOCKS.AIR;
-                        }
+                        this.data[idx] = y <= WATER_LEVEL ? BLOCKS.WATER : BLOCKS.AIR;
                     } else if (y === surfaceY) {
-                        // Sand near oceans or desert, Stone entirely for mountains
-                        if (isDesert || (surfaceY <= WATER_LEVEL + 2 && !isMountain)) {
-                            this.data[idx] = BLOCKS.SAND;
-                        } else if (isMountain) {
-                            this.data[idx] = BLOCKS.STONE;
-                        } else {
-                            this.data[idx] = BLOCKS.GRASS;
-                        }
+                        if (isDesert || (surfaceY <= WATER_LEVEL + 2 && !isMountain)) this.data[idx] = BLOCKS.SAND;
+                        else if (isMountain) this.data[idx] = BLOCKS.STONE;
+                        else this.data[idx] = BLOCKS.GRASS;
                     } else if (y > surfaceY - 4) {
                         this.data[idx] = (isDesert || isOcean) ? BLOCKS.SAND : (isMountain ? BLOCKS.STONE : BLOCKS.DIRT);
                     } else {
                         this.data[idx] = BLOCKS.STONE;
                     }
-                    
-                    // Caves (3D Noise)
+                    // Caves
                     if (y < surfaceY && y > 2) {
                         let caveNoise = noise3D(wx * 0.05, y * 0.05, wz * 0.05);
                         if (caveNoise > 0.5) {
@@ -104,43 +135,89 @@ export class Chunk {
                         }
                     }
                 }
-                
-                // Flora (Trees and Cacti)
-                let hash = Math.sin(wx * 12.9898 + wz * 78.233) * 43758.5453;
-                let treeRng = hash - Math.floor(hash);
 
-                if (surfaceY >= WATER_LEVEL) { // Don't spawn plants underwater
-                    if (isDesert && treeRng < 0.02) {
-                        // Cactus
-                        let cactusHeight = 2 + Math.floor((hash * 10) % 3);
-                        for(let ty = 1; ty <= cactusHeight; ty++) {
-                            if (surfaceY + ty < CHUNK_HEIGHT)
-                                this.data[this.getIndex(x, surfaceY + ty, z)] = BLOCKS.CACTUS;
+                // Tree trunk placement (only for the grid candidate position)
+                if (surfaceY >= WATER_LEVEL) {
+                    let cellX = Math.floor(wx / TREE_GRID);
+                    let cellZ = Math.floor(wz / TREE_GRID);
+                    let h1 = Math.sin(cellX * 127.1 + cellZ * 311.7) * 43758.5453; h1 -= Math.floor(h1);
+                    let h2 = Math.sin(cellX * 269.5 + cellZ * 183.3) * 43758.5453; h2 -= Math.floor(h2);
+                    let candWX = cellX * TREE_GRID + Math.floor(h1 * TREE_GRID);
+                    let candWZ = cellZ * TREE_GRID + Math.floor(h2 * TREE_GRID);
+                    let cellProb = Math.sin(cellX * 73.47 + cellZ * 512.91) * 43758.5453;
+                    cellProb -= Math.floor(cellProb);
+
+                    if (wx === candWX && wz === candWZ) {
+                        if (isDesert && cellProb < 0.3) {
+                            // Cactus
+                            let cH = 2 + Math.floor(h1 * 3);
+                            for (let ty = 1; ty <= cH; ty++) {
+                                if (surfaceY + ty < CHUNK_HEIGHT)
+                                    this.data[this.getIndex(x, surfaceY + ty, z)] = BLOCKS.CACTUS;
+                            }
+                        } else if (!isDesert && !isOcean && !isMountain && surfaceY > WATER_LEVEL + 2 && cellProb < 0.65) {
+                            // Tree trunk only (not on sand/beach)
+                            let treeHeight = 4 + Math.floor(h2 * 3);
+                            for (let ty = 1; ty <= treeHeight; ty++) {
+                                if (surfaceY + ty < CHUNK_HEIGHT)
+                                    this.data[this.getIndex(x, surfaceY + ty, z)] = BLOCKS.WOOD;
+                            }
                         }
-                    } else if (!isDesert && !isPlains && !isOcean && !isMountain && treeRng < 0.015) {
-                        // Regular Tree
-                        let hash2 = Math.sin(wx * 39.346 + wz * 11.135) * 43758.5453;
-                        let hRng = hash2 - Math.floor(hash2);
-                        let treeHeight = 4 + Math.floor(hRng * 3);
-                        for(let ty = 1; ty <= treeHeight; ty++) {
-                            if (surfaceY + ty < CHUNK_HEIGHT)
-                                this.data[this.getIndex(x, surfaceY + ty, z)] = BLOCKS.WOOD;
-                        }
-                        // Leaves
-                        for (let lx = -2; lx <= 2; lx++) {
-                            for (let ly = -2; ly <= 2; ly++) {
-                                for (let lz = -2; lz <= 2; lz++) {
-                                    if (lx*lx + ly*ly + lz*lz <= 6) {
-                                        let tx = x + lx;
-                                        let tz = z + lz;
-                                        let ty = surfaceY + treeHeight + ly;
-                                        if (tx>=0 && tx<CHUNK_SIZE && tz>=0 && tz<CHUNK_SIZE && ty>=0 && ty<CHUNK_HEIGHT) {
-                                            if (this.data[this.getIndex(tx, ty, tz)] === BLOCKS.AIR) {
-                                                this.data[this.getIndex(tx, ty, tz)] = BLOCKS.LEAVES;
-                                            }
-                                        }
-                                    }
-                                }
+                    }
+                }
+            }
+        }
+
+        // ---- PASS 2: Leaves (cross-chunk aware) ----
+        // For each column, check all tree-grid cells within canopy reach.
+        // This correctly handles trees whose canopy extends from a neighboring chunk.
+        const LEAF_H_RADIUS = 2;
+        // Canopy layers relative to trunk top: lower start = less exposed trunk
+        const treeLayers = [
+            { dy: -2, r: 2, sk: true  }, // 5×5 - corners
+            { dy: -1, r: 2, sk: true  }, // 5×5 - corners
+            { dy:  0, r: 1, sk: false }, // 3×3
+            { dy: +1, r: 1, sk: true  }, // cross (3×3 - corners)
+        ];
+
+        for (let x = 0; x < CHUNK_SIZE; x++) {
+            for (let z = 0; z < CHUNK_SIZE; z++) {
+                let wx = worldXOffset + x;
+                let wz = worldZOffset + z;
+
+                // Find grid cells whose candidate could have a canopy over (wx,wz)
+                let cMinX = Math.floor((wx - LEAF_H_RADIUS) / TREE_GRID);
+                let cMaxX = Math.floor((wx + LEAF_H_RADIUS) / TREE_GRID);
+                let cMinZ = Math.floor((wz - LEAF_H_RADIUS) / TREE_GRID);
+                let cMaxZ = Math.floor((wz + LEAF_H_RADIUS) / TREE_GRID);
+
+                for (let tcX = cMinX; tcX <= cMaxX; tcX++) {
+                    for (let tcZ = cMinZ; tcZ <= cMaxZ; tcZ++) {
+                        // Derive candidate world position for this cell
+                        let h1 = Math.sin(tcX * 127.1 + tcZ * 311.7) * 43758.5453; h1 -= Math.floor(h1);
+                        let h2 = Math.sin(tcX * 269.5 + tcZ * 183.3) * 43758.5453; h2 -= Math.floor(h2);
+                        let cWX = tcX * TREE_GRID + Math.floor(h1 * TREE_GRID);
+                        let cWZ = tcZ * TREE_GRID + Math.floor(h2 * TREE_GRID);
+
+                        let dx = wx - cWX;
+                        let dz = wz - cWZ;
+                        if (Math.abs(dx) > LEAF_H_RADIUS || Math.abs(dz) > LEAF_H_RADIUS) continue;
+
+                        // Get tree info at the candidate (recomputes biome — deterministic + fast)
+                        let info = this.getTreeInfoAtWorld(cWX, cWZ);
+                        if (!info) continue;
+
+                        let trunkTop = info.surfaceY + info.treeHeight;
+
+                        // Place leaves for layers that cover this (dx, dz) offset
+                        for (const layer of treeLayers) {
+                            if (Math.abs(dx) > layer.r || Math.abs(dz) > layer.r) continue;
+                            if (layer.sk && Math.abs(dx) === layer.r && Math.abs(dz) === layer.r) continue;
+                            let leafY = trunkTop + layer.dy;
+                            if (leafY < 0 || leafY >= CHUNK_HEIGHT) continue;
+                            let existing = this.data[this.getIndex(x, leafY, z)];
+                            if (existing === BLOCKS.AIR || existing === BLOCKS.LEAVES) {
+                                this.data[this.getIndex(x, leafY, z)] = BLOCKS.LEAVES;
                             }
                         }
                     }
@@ -148,7 +225,25 @@ export class Chunk {
             }
         }
         
-        // Apply modified blocks
+        // Apply player modifications (saved blocks)
+        for (let x = 0; x < CHUNK_SIZE; x++) {
+            for (let z = 0; z < CHUNK_SIZE; z++) {
+                let wx = worldXOffset + x;
+                let wz = worldZOffset + z;
+                for (let y = 0; y < CHUNK_HEIGHT; y++) {
+                    let modKey = `${wx},${y},${wz}`;
+                    if (window.modifiedBlocks && window.modifiedBlocks[modKey] !== undefined) {
+                        this.data[this.getIndex(x, y, z)] = window.modifiedBlocks[modKey];
+                    }
+                }
+            }
+        }
+    }
+
+    // Re-applies modifiedBlocks to chunk data (called on second pass for cross-chunk leaves)
+    applyModifiedBlocks() {
+        let worldXOffset = this.chunkX * CHUNK_SIZE;
+        let worldZOffset = this.chunkZ * CHUNK_SIZE;
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 let wx = worldXOffset + x;
