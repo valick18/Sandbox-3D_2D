@@ -759,16 +759,16 @@ function init() {
             initRainAudio();
             initBlizzardAudio();
         } else if (c === '/spring') {
-            totalGameDays = 0;
+            gameTime = (0 * 10) * Math.PI * 2 + (Math.PI / 4);
             addChatMessage("Spring breeze fills the air...");
         } else if (c === '/summer') {
-            totalGameDays = 10;
+            gameTime = (1 * 10) * Math.PI * 2 + (Math.PI / 4);
             addChatMessage("The sun burns hot. Summer is here.");
         } else if (c === '/autumn') {
-            totalGameDays = 20;
+            gameTime = (2 * 10) * Math.PI * 2 + (Math.PI / 4);
             addChatMessage("Leaves begin to fall. Autumn arrives.");
         } else if (c === '/winter') {
-            totalGameDays = 30;
+            gameTime = (3 * 10) * Math.PI * 2 + (Math.PI / 4);
             addChatMessage("A cold wind blows. Winter has come.");
         } else if (c === '/help') {
             addChatMessage("Commands: /day, /night, /sunrise, /sunset, /rain, /storm, /spring, /summer, /autumn, /winter, /help");
@@ -1210,7 +1210,8 @@ function checkAABB(px, py, pz) {
         for (let y = startY; y <= endY; y++) {
             for (let z = startZ; z <= endZ; z++) {
                 let blockId = getBlockGlobal(x, y, z);
-                if (blockId !== BLOCKS.AIR && blockId !== BLOCKS.WATER) return true;
+                // Ignore AIR, WATER, and all FLORA (Flowers/Grass IDs 13-15)
+                if (blockId !== BLOCKS.AIR && blockId !== BLOCKS.WATER && blockId < 13) return true;
             }
         }
     }
@@ -1342,10 +1343,10 @@ function animate() {
     // Seasonal Material Colors
     if (materials[BLOCKS.GRASS]) {
         const seasonColors = [
-            { g: new THREE.Color(0x66cc66), l: new THREE.Color(0xffaac0) }, // Spring
-            { g: new THREE.Color(0x50b450), l: new THREE.Color(0x287828) }, // Summer
-            { g: new THREE.Color(0x90a050), l: new THREE.Color(0xd06020) }, // Autumn
-            { g: new THREE.Color(0xffffff), l: new THREE.Color(0xffffff) }  // Winter
+            { g: new THREE.Color(0x66cc66), l: new THREE.Color(0xffaac0) }, // Spring (Pink Blossom)
+            { g: new THREE.Color(0x50b450), l: new THREE.Color(0x287828) }, // Summer (Lush)
+            { g: new THREE.Color(0xb09040), l: new THREE.Color(0xe05010) }, // Autumn (Golden/Orange)
+            { g: new THREE.Color(0xffffff), l: new THREE.Color(0xffffff) }  // Winter (Snow)
         ];
         let c1 = seasonColors[currentSeason];
         let c2 = seasonColors[(currentSeason + 1) % 4];
@@ -1356,10 +1357,20 @@ function animate() {
         materials[100].color.copy(c1.g).lerp(c2.g, factor); // side
         materials[BLOCKS.LEAVES].color.copy(c1.l).lerp(c2.l, factor);
         
-        // Flora colors (flowers)
+        // Flora colors (flowers & tall grass)
+        if (materials[BLOCKS.TALL_GRASS]) {
+            materials[BLOCKS.TALL_GRASS].color.copy(c1.g).lerp(c2.g, factor);
+        }
         if (materials[BLOCKS.FLOWER_RED]) {
              if (currentSeason === SEASONS.WINTER) materials[BLOCKS.FLOWER_RED].visible = false;
-             else materials[BLOCKS.FLOWER_RED].visible = true;
+             else {
+                 materials[BLOCKS.FLOWER_RED].visible = true;
+                 // Slight tint for flowers too
+                 materials[BLOCKS.FLOWER_RED].color.copy(new THREE.Color(0xffffff)).lerp(c2.g, factor * 0.3);
+             }
+        }
+        if (materials[BLOCKS.FLOWER_YELLOW]) {
+             materials[BLOCKS.FLOWER_YELLOW].visible = (currentSeason !== SEASONS.WINTER);
         }
     }
 
@@ -1403,11 +1414,12 @@ function animate() {
         }
     }
 
-    // Weather
+    // Weather (Increase snow/rain chance in winter)
     updateRain(delta, camera.position, isSheltered);
+    let weatherChance = (currentSeason === SEASONS.WINTER) ? 0.15 : 0.05; 
     if (time - lastWeatherChange > 30000) {
         let rolled = Math.random();
-        if (rolled < 0.05) { 
+        if (rolled < weatherChance) { 
             if (!isRaining) { isRaining = true; isStorming = Math.random() < 0.3; }
             else { isRaining = false; isStorming = false; }
             if (isRaining) initRainAudio();

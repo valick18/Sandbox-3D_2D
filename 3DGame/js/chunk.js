@@ -326,6 +326,7 @@ export class Chunk {
                         else if (nBlock === BLOCKS.LEAVES && blockId !== BLOCKS.LEAVES) shouldRender = true;
                         else if (nBlock === BLOCKS.WATER && blockId !== BLOCKS.WATER) shouldRender = true;
                         else if (nBlock === BLOCKS.CACTUS && blockId !== BLOCKS.CACTUS) shouldRender = true;
+                        else if (nBlock >= 13) shouldRender = true; 
                         
                         if (shouldRender) {
                             

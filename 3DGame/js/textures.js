@@ -46,21 +46,21 @@ function createCanvasTex(blockId, blockFn) {
     const ctx = canvas.getContext('2d');
     const imgData = ctx.createImageData(size, size);
     const data = imgData.data;
-    
+
     for (let i = 0; i < size * size; i++) {
         let x = i % size;
         let y = Math.floor(i / size);
         let color = blockFn(x, y);
-        
+
         let idx = i * 4;
         data[idx] = Math.max(0, Math.min(255, color[0]));
-        data[idx+1] = Math.max(0, Math.min(255, color[1]));
-        data[idx+2] = Math.max(0, Math.min(255, color[2]));
-        data[idx+3] = color[3] !== undefined ? color[3] : 255;
+        data[idx + 1] = Math.max(0, Math.min(255, color[1]));
+        data[idx + 2] = Math.max(0, Math.min(255, color[2]));
+        data[idx + 3] = color[3] !== undefined ? color[3] : 255;
     }
-    
+
     ctx.putImageData(imgData, 0, 0);
-    
+
     // Extract base64 for HTML UI
     icons[blockId] = canvas.toDataURL();
 
@@ -74,7 +74,7 @@ function createCanvasTex(blockId, blockFn) {
 
 export function generateMaterials() {
     materials[BLOCKS.AIR] = null;
-    
+
     // Dirt - clumpy texture
     materials[BLOCKS.DIRT] = createCanvasTex(BLOCKS.DIRT, (x, y) => {
         let nx = (x / 64) * Math.PI * 2;
@@ -83,7 +83,7 @@ export function generateMaterials() {
         let clumps = Math.sin(nx * 5) * Math.cos(ny * 5) * 20 + Math.sin(nx * 2 + ny * 3) * 15;
         if (Math.random() < 0.05) clumps -= 30; // pebbles
         let c = BASE_COLORS[BLOCKS.DIRT];
-        return [c[0]+vary+clumps, c[1]+vary+clumps, c[2]+vary+clumps];
+        return [c[0] + vary + clumps, c[1] + vary + clumps, c[2] + vary + clumps];
     });
 
     // Grass Top - rich pattern
@@ -93,9 +93,9 @@ export function generateMaterials() {
         let vary = (Math.random() - 0.5) * 15;
         let pattern = Math.sin(nx * 4) * Math.sin(ny * 4) * 25 + Math.cos(nx * 7 + ny * 10) * 10;
         let c = BASE_COLORS[BLOCKS.GRASS];
-        return [c[0]+vary+pattern, c[1]+vary+pattern+10, c[2]+vary+pattern];
+        return [c[0] + vary + pattern, c[1] + vary + pattern + 10, c[2] + vary + pattern];
     });
-    
+
     // Grass Side - smooth transition
     materials[100] = createCanvasTex(100, (x, y) => {
         let nx = (x / 64) * Math.PI * 2;
@@ -104,12 +104,12 @@ export function generateMaterials() {
         let vary = (Math.random() - 0.5) * 20;
         if (y < drop) {
             let c = BASE_COLORS[BLOCKS.GRASS];
-            let grad = (drop - y) / drop; 
-            return [c[0]*grad + 20 + vary, c[1]*grad + 60 + vary, c[2]*grad + 20 + vary];
+            let grad = (drop - y) / drop;
+            return [c[0] * grad + 20 + vary, c[1] * grad + 60 + vary, c[2] * grad + 20 + vary];
         } else {
             let c = BASE_COLORS[BLOCKS.DIRT];
             let clumps = Math.sin(nx * 5) * Math.cos(ny * 5) * 15;
-            return [c[0]+vary+clumps, c[1]+vary+clumps, c[2]+vary+clumps];
+            return [c[0] + vary + clumps, c[1] + vary + clumps, c[2] + vary + clumps];
         }
     });
     // Overwrite the Grass inventory icon to use the Grass Side texture so it looks exactly like "Dirt with Grass" to the user
@@ -125,7 +125,7 @@ export function generateMaterials() {
         let shade = crack * 20;
         if (crack < 0.4) shade -= 40; // deep crack
         let c = BASE_COLORS[BLOCKS.STONE];
-        return [c[0]-shade+vary, c[1]-shade+vary, c[2]-shade+vary];
+        return [c[0] - shade + vary, c[1] - shade + vary, c[2] - shade + vary];
     });
 
     // Wood - Tree Rings (side view)
@@ -136,7 +136,7 @@ export function generateMaterials() {
         let grain = Math.sin(nx * 3 + Math.sin(ny * 1) * 2) * 25;
         if (Math.sin(nx * 8) > 0.9) vary -= 40;
         let c = BASE_COLORS[BLOCKS.WOOD];
-        return [c[0]+grain+vary, c[1]+grain+vary, c[2]+grain+vary];
+        return [c[0] + grain + vary, c[1] + grain + vary, c[2] + grain + vary];
     });
 
     // Leaves - Minecraft-style: tiny leaf shapes on dark green bg
@@ -190,12 +190,12 @@ export function generateMaterials() {
     leafMat.transparent = false;
     leafMat.alphaTest = 0;
     materials[BLOCKS.LEAVES] = leafMat;
-    
+
     // Sand - very fine subtle noise
     materials[BLOCKS.SAND] = createCanvasTex(BLOCKS.SAND, (x, y) => {
         let vary = (Math.random() - 0.5) * 15;
         let c = BASE_COLORS[BLOCKS.SAND];
-        return [c[0]+vary, c[1]+vary, c[2]+vary];
+        return [c[0] + vary, c[1] + vary, c[2] + vary];
     });
 
     // Planks
@@ -203,7 +203,7 @@ export function generateMaterials() {
         let vary = (Math.random() - 0.5) * 10;
         if (y % 16 === 0 || x % 32 === 0) vary -= 30;
         let c = BASE_COLORS[BLOCKS.PLANKS];
-        return [c[0]+vary, c[1]+vary, c[2]+vary];
+        return [c[0] + vary, c[1] + vary, c[2] + vary];
     });
 
     // Meat - realistic marbling
@@ -214,9 +214,9 @@ export function generateMaterials() {
         let fat = Math.sin(nx * 3 + ny * 6) + Math.sin(nx * 7 - ny * 2);
         let c = BASE_COLORS[BLOCKS.MEAT];
         if (fat > 0.8) {
-             return [240+vary, 220+vary, 220+vary];
+            return [240 + vary, 220 + vary, 220 + vary];
         }
-        return [c[0]+vary, c[1]+vary, c[2]+vary];
+        return [c[0] + vary, c[1] + vary, c[2] + vary];
     });
 
     // Workbench - grid/tools on top, planks on side
@@ -225,13 +225,13 @@ export function generateMaterials() {
         let c = BASE_COLORS[BLOCKS.WORKBENCH];
         // Grid pattern
         if (x % 32 < 2 || y % 32 < 2) {
-            return [c[0]-40+vary, c[1]-40+vary, c[2]-40+vary];
+            return [c[0] - 40 + vary, c[1] - 40 + vary, c[2] - 40 + vary];
         }
         // Simulated tools (pixels)
         if ((x > 10 && x < 20 && y > 10 && y < 15) || (x > 40 && x < 45 && y > 30 && y < 50)) {
-            return [100+vary, 100+vary, 110+vary]; // metallic tool parts
+            return [100 + vary, 100 + vary, 110 + vary]; // metallic tool parts
         }
-        return [c[0]+vary, c[1]+vary, c[2]+vary];
+        return [c[0] + vary, c[1] + vary, c[2] + vary];
     });
 
     // Chest - wood with iron borders and lock
@@ -240,23 +240,23 @@ export function generateMaterials() {
         let c = BASE_COLORS[BLOCKS.CHEST];
         // Wood grain
         let grain = Math.sin((x / 64) * Math.PI * 10) * 10;
-        
+
         // Iron borders
         if (x < 4 || x > 60 || y < 4 || y > 60) {
             return [60, 60, 65]; // iron rim
         }
-        
+
         // Lock
         if (x > 28 && x < 36 && y > 24 && y < 36) {
-            return [200+vary, 200+vary, 200+vary]; // silver lock
+            return [200 + vary, 200 + vary, 200 + vary]; // silver lock
         }
-        
+
         // horizontal plank lines
         if (y % 16 < 2) {
-            return [c[0]-30+vary, c[1]-30+vary, c[2]-30+vary];
+            return [c[0] - 30 + vary, c[1] - 30 + vary, c[2] - 30 + vary];
         }
-        
-        return [c[0]+grain+vary, c[1]+grain+vary, c[2]+grain+vary];
+
+        return [c[0] + grain + vary, c[1] + grain + vary, c[2] + grain + vary];
     });
 
     // Water - translucent animated feel
@@ -265,7 +265,7 @@ export function generateMaterials() {
         let ny = (y / 64) * Math.PI * 2;
         let wave = Math.sin(nx * 2 + ny * 3) * 10;
         let c = BASE_COLORS[BLOCKS.WATER];
-        return [c[0]+wave, c[1]+wave, c[2]+wave];
+        return [c[0] + wave, c[1] + wave, c[2] + wave];
     });
     waterMat.transparent = true;
     waterMat.opacity = 0.75;
@@ -276,50 +276,71 @@ export function generateMaterials() {
     waterMat.polygonOffsetUnits = -2;
     materials[BLOCKS.WATER] = waterMat;
 
+    // Cactus - green with dark vertical lines and spine dots
+    materials[BLOCKS.CACTUS] = createCanvasTex(BLOCKS.CACTUS, (x, y) => {
+        let vary = (Math.random() - 0.5) * 10;
+        let c = BASE_COLORS[BLOCKS.CACTUS];
+        if (x % 16 < 2) return [c[0] - 30 + vary, c[1] - 30 + vary, c[2] - 30 + vary];
+        if (Math.random() < 0.05) return [200, 200, 150]; // pale spike
+        return [c[0] + vary, c[1] + vary, c[2] + vary];
     });
-    
+
     // --- FLORA (Flowers & Tall Grass) ---
-    const createFloraTex = (blockId, type) => {
-        const canvas = document.createElement('canvas');
-        canvas.width = size; canvas.height = size;
-        const ctx = canvas.getContext('2d');
-        const imgData = ctx.createImageData(size, size);
-        const data = imgData.data;
+const createFloraTex = (blockId, type) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.createImageData(size, size);
+    const data = imgData.data;
 
-        for (let i = 0; i < size * size; i++) {
-            let x = i % size, y = Math.floor(i / size);
-            let r=0, g=0, b=0, a=0;
-            
-            // Stem (Green)
-            if (x >= 28 && x <= 34 && y > 20) {
-                r=40; g=120; b=40; a=255;
-                if (Math.random() < 0.2) g+=30;
-            }
-            // Flower Head
-            if (type === 'flower') {
-                let dist = Math.sqrt(Math.pow(x-32,2) + Math.pow(y-20,2));
-                if (dist < 10) {
-                    if (blockId === BLOCKS.FLOWER_RED) { r=220; g=40; b=40; a=255; }
-                    else { r=220; g=200; b=40; a=255; }
-                    if (dist < 3) { r=255; g=255; b=100; } // center
-                }
-            } else if (type === 'grass') {
-                // High grass blades
-                let blade = Math.sin(x*0.5 + y*0.2) > 0.5 && y > (10 + Math.sin(x*0.8)*15);
-                if (blade) { r=60; g=140; b=50; a=255; }
-            }
+    for (let i = 0; i < size * size; i++) {
+        let x = i % size, y = Math.floor(i / size);
+        let r = 0, g = 0, b = 0, a = 0;
 
-            let idx = i * 4;
-            data[idx] = r; data[idx+1] = g; data[idx+2] = b; data[idx+3] = a;
+        // Stem (Green)
+        if (x >= 28 && x <= 34 && y > 20) {
+            r = 40; g = 120; b = 40; a = 255;
+            if (Math.random() < 0.2) g += 30;
         }
-        ctx.putImageData(imgData, 0, 0);
-        icons[blockId] = canvas.toDataURL();
-        const tex = new THREE.CanvasTexture(canvas);
-        tex.magFilter = THREE.NearestFilter;
-        return new THREE.MeshLambertMaterial({ map: tex, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide });
-    };
+        // Flower Head
+        if (type === 'flower') {
+            let dist = Math.sqrt(Math.pow(x - 32, 2) + Math.pow(y - 20, 2));
+            if (dist < 10) {
+                if (blockId === BLOCKS.FLOWER_RED) { r = 220; g = 40; b = 40; a = 255; }
+                else { r = 220; g = 200; b = 40; a = 255; }
+                if (dist < 3) { r = 255; g = 255; b = 100; } // center
+            }
+        } else if (type === 'grass') {
+            // High grass blades - redesigned for beauty
+            let isBlade = false;
+            let noise = Math.sin(x * 0.8) * 2;
+            for (let b = -1; b <= 1; b++) {
+                let centerX = 32 + b * 10 + noise;
+                let width = 3 - Math.abs(b); 
+                let height = 20 + Math.random() * 15;
+                if (Math.abs(x - centerX) < width * (y / 64) && y > (64 - height)) {
+                    isBlade = true;
+                    break;
+                }
+            }
+            if (isBlade) {
+                let grad = (y - 30) / 34;
+                r = 50 + grad * 20; g = 130 - grad * 40; b = 40; a = 255;
+                if (Math.random() < 0.1) g += 30;
+            }
+        }
 
-    materials[BLOCKS.FLOWER_RED] = createFloraTex(BLOCKS.FLOWER_RED, 'flower');
-    materials[BLOCKS.FLOWER_YELLOW] = createFloraTex(BLOCKS.FLOWER_YELLOW, 'flower');
-    materials[BLOCKS.TALL_GRASS] = createFloraTex(BLOCKS.TALL_GRASS, 'grass');
+        let idx = i * 4;
+        data[idx] = r; data[idx + 1] = g; data[idx + 2] = b; data[idx + 3] = a;
+    }
+    ctx.putImageData(imgData, 0, 0);
+    icons[blockId] = canvas.toDataURL();
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.magFilter = THREE.NearestFilter;
+    return new THREE.MeshLambertMaterial({ map: tex, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide });
+};
+
+materials[BLOCKS.FLOWER_RED] = createFloraTex(BLOCKS.FLOWER_RED, 'flower');
+materials[BLOCKS.FLOWER_YELLOW] = createFloraTex(BLOCKS.FLOWER_YELLOW, 'flower');
+materials[BLOCKS.TALL_GRASS] = createFloraTex(BLOCKS.TALL_GRASS, 'grass');
 }
