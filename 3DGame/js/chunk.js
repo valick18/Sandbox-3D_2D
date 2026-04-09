@@ -348,40 +348,14 @@ export class Chunk {
                                     waterFaces.uv.push(uvSeq[cv][0], uvSeq[cv][1]);
                                     cv++;
                                 }
-                                waterFaces.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
-                            } else if (blockId >= 13) {
-                                // Cross-Quad for Flora (Flowers, Grass)
-                                // We handle this AFTER the cuboid loop or special-case it.
-                                // Let's special case: actually ONLY do this once per block (not per 6 faces)
-                                if (index === 0) { // Only trigger for first face loop
-                                    if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
-                                    let mf = solidFaces[matId];
-                                    
-                                    // Two diagonal planes
-                                    const plantPlanes = [
-                                        [[0,0,0],[1,0,1],[1,1,1],[0,1,0]],
-                                        [[0,0,1],[1,0,0],[1,1,0],[0,1,1]]
-                                    ];
-                                    for (let plane of plantPlanes) {
-                                        let startV = mf.pos.length / 3;
-                                        let cv = 0;
-                                        for (let p of plane) {
-                                            mf.pos.push(x + p[0], y + p[1], z + p[2]);
-                                            mf.norm.push(0, 1, 0); // upward norm
-                                            mf.uv.push(uvSeq[cv][0], uvSeq[cv][1]);
-                                            cv++;
-                                        }
-                                        mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
-                                    }
-                                }
+                                 waterFaces.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
                             } else if (blockId === BLOCKS.SNOW_LAYER) {
                                 // 3D Minecraft-style Snow Layer: Thin cuboid (Top + 4 Sides)
                                 if (index === 0) { 
                                     if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
                                     let mf = solidFaces[matId];
-                                    const h = 0.125; // 2 pixels high (1/8 of block)
+                                    const h = 0.125; // 2 pixels high
                                     
-                                    // 1. Top face
                                     let startV = mf.pos.length / 3;
                                     const top = [[0,h,0],[1,h,0],[1,h,1],[0,h,1]];
                                     for(let p of top) { 
@@ -391,7 +365,6 @@ export class Chunk {
                                     mf.uv.push(0,0, 1,0, 1,1, 0,1);
                                     mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
 
-                                    // 2. Side faces (North, South, East, West)
                                     const sides = [
                                         [[0,0,1],[1,0,1],[1,h,1],[0,h,1]], // Z+
                                         [[1,0,0],[0,0,0],[0,h,0],[1,h,0]], // Z-
@@ -405,7 +378,28 @@ export class Chunk {
                                             mf.pos.push(x + p[0], y + p[1], z + p[2]);
                                             mf.norm.push(norms[si][0], norms[si][1], norms[si][2]);
                                         }
-                                        mf.uv.push(0,1, 1,1, 1,0, 0,0); // Mapping bottom of side to texture
+                                        mf.uv.push(0,1, 1,1, 1,0, 0,0); 
+                                        mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
+                                    }
+                                }
+                            } else if (blockId >= 13 && blockId <= 15) {
+                                // Cross-Quad for Flora (Flowers, Grass)
+                                if (index === 0) {
+                                    if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
+                                    let mf = solidFaces[matId];
+                                    const plantPlanes = [
+                                        [[0,0,0],[1,0,1],[1,1,1],[0,1,0]],
+                                        [[0,0,1],[1,0,0],[1,1,0],[0,1,1]]
+                                    ];
+                                    for (let plane of plantPlanes) {
+                                        let startV = mf.pos.length / 3;
+                                        let cv = 0;
+                                        for (let p of plane) {
+                                            mf.pos.push(x + p[0], y + p[1], z + p[2]);
+                                            mf.norm.push(0, 1, 0);
+                                            mf.uv.push(uvSeq[cv][0], uvSeq[cv][1]);
+                                            cv++;
+                                        }
                                         mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
                                     }
                                 }
