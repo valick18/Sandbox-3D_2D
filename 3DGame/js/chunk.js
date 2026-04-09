@@ -163,6 +163,18 @@ export class Chunk {
                                     this.data[this.getIndex(x, surfaceY + ty, z)] = BLOCKS.WOOD;
                             }
                         }
+                    } else {
+                        // Regular Flora (Flowers/Grass) - random noise based
+                        if (this.data[this.getIndex(x, surfaceY, z)] === BLOCKS.GRASS && surfaceY < CHUNK_HEIGHT - 1) {
+                            let floraProb = Math.sin(wx * 0.13 + wz * 0.27) * 0.5 + 0.5;
+                            if (floraProb > 0.85) {
+                                let type = Math.sin(wx * 1.5 + wz * 0.4) * 0.5 + 0.5;
+                                let block = BLOCKS.TALL_GRASS;
+                                if (type > 0.8) block = BLOCKS.FLOWER_RED;
+                                else if (type > 0.6) block = BLOCKS.FLOWER_YELLOW;
+                                this.data[this.getIndex(x, surfaceY + 1, z)] = block;
+                            }
+                        }
                     }
                 }
             }
@@ -335,6 +347,31 @@ export class Chunk {
                                     cv++;
                                 }
                                 waterFaces.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
+                            } else if (blockId >= 13) {
+                                // Cross-Quad for Flora (Flowers, Grass)
+                                // We handle this AFTER the cuboid loop or special-case it.
+                                // Let's special case: actually ONLY do this once per block (not per 6 faces)
+                                if (index === 0) { // Only trigger for first face loop
+                                    if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
+                                    let mf = solidFaces[matId];
+                                    
+                                    // Two diagonal planes
+                                    const plantPlanes = [
+                                        [[0,0,0],[1,0,1],[1,1,1],[0,1,0]],
+                                        [[0,0,1],[1,0,0],[1,1,0],[0,1,1]]
+                                    ];
+                                    for (let plane of plantPlanes) {
+                                        let startV = mf.pos.length / 3;
+                                        let cv = 0;
+                                        for (let p of plane) {
+                                            mf.pos.push(x + p[0], y + p[1], z + p[2]);
+                                            mf.norm.push(0, 1, 0); // upward norm
+                                            mf.uv.push(uvSeq[cv][0], uvSeq[cv][1]);
+                                            cv++;
+                                        }
+                                        mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
+                                    }
+                                }
                             } else {
                                 if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
                                 let mf = solidFaces[matId];

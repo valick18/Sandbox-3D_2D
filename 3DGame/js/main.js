@@ -103,17 +103,58 @@ function updateInventoryUI() {
     localStorage.setItem('sandbox3d_inventory', JSON.stringify(inventory.slots));
 }
 
-// --- WEATHER & RAIN ---
+// --- WEATHER & SEASONS ---
+const SEASONS = { SPRING: 0, SUMMER: 1, AUTUMN: 2, WINTER: 3 };
+let totalGameDays = 0;
+let currentSeason = SEASONS.SUMMER;
+let seasonLerp = 0; // 0..1 progress within season
+
 let isRaining = false;
 let isStorming = false;
 let rainIntensity = 0; // 0..1
 let rainParticles = null;
 let rainAudioGain = null;
 let rainFilter = null;
+let blizzardAudioGain = null; // for winter wind
+
 let lastWeatherChange = performance.now();
 let lightningLevel = 0;
 let nextLightningTime = 0;
 let thunderTimeout = null;
+
+function initBlizzardAudio() {
+    if (blizzardAudioGain || !audioCtx) return;
+    try {
+        const bufSize = 4 * audioCtx.sampleRate;
+        const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+        const data = buf.getChannelData(0);
+        let b0=0, b1=0, b2=0, b3=0, b4=0, b5=0, b6=0;
+        for (let i = 0; i < bufSize; i++) {
+            let white = Math.random() * 2 - 1;
+            b0 = 0.99886 * b0 + white * 0.0555179;
+            b1 = 0.99332 * b1 + white * 0.0750759;
+            b2 = 0.96900 * b2 + white * 0.1538520;
+            b3 = 0.86650 * b3 + white * 0.3104856;
+            b4 = 0.55000 * b4 + white * 0.5329522;
+            b5 = -0.7616 * b5 - white * 0.0168980;
+            data[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
+            data[i] *= 0.11;
+            b6 = white * 0.115926;
+        }
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = buf;
+        noise.loop = true;
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 400;
+        blizzardAudioGain = audioCtx.createGain();
+        blizzardAudioGain.gain.value = 0;
+        noise.connect(filter);
+        filter.connect(blizzardAudioGain);
+        blizzardAudioGain.connect(audioCtx.destination);
+        noise.start();
+    } catch (e) {}
+}
 
 function playThunder(dist = 1) {
     if (!audioCtx) return;
@@ -224,40 +265,57 @@ function updateRain(delta, cameraPos, isSheltered) {
     if (isRaining && rainIntensity < 1) rainIntensity = Math.min(1, rainIntensity + delta * fadeSpeed);
     else if (!isRaining && rainIntensity > 0) rainIntensity = Math.max(0, rainIntensity - delta * fadeSpeed);
 
+    // Winter visuals: White particles for snow
+    if (currentSeason === SEASONS.WINTER) {
+        rainParticles.material.color.set(0xffffff);
+        rainParticles.material.size = 0.25;
+    } else {
+        rainParticles.material.color.set(0x88ccff);
+        rainParticles.material.size = 0.15;
+    }
+
     rainParticles.material.opacity = rainIntensity * 0.45;
+    
+    // Audio modulation
     if (rainAudioGain && rainFilter) {
         let targetFreq = isSheltered ? 400 : 1200;
-        let targetVol = (isSheltered ? 0.04 : 0.12); // Deep is handled implicitly by being sheltered? No, let's keep it clean
-        // Actually animate loop will handle global vol if deep. 
-        // But for now rain sound is separate.
+        let targetVol = (isSheltered ? 0.04 : 0.12);
         let wx = Math.floor(camera.position.x), wz = Math.floor(camera.position.z);
         let surfaceY = getSurfaceY(wx, wz);
         if (camera.position.y < surfaceY - 9) targetVol = 0; 
         
+        let rainVol = (currentSeason === SEASONS.WINTER) ? 0 : targetVol;
+        let snowVol = (currentSeason === SEASONS.WINTER) ? targetVol * 1.5 : 0;
+
         rainFilter.frequency.setTargetAtTime(targetFreq, audioCtx.currentTime, 0.2);
-        rainAudioGain.gain.setTargetAtTime(targetVol * rainIntensity, audioCtx.currentTime, 0.2);
+        rainAudioGain.gain.setTargetAtTime(rainVol * rainIntensity, audioCtx.currentTime, 0.2);
+        
+        if (blizzardAudioGain) {
+            blizzardAudioGain.gain.setTargetAtTime(snowVol * rainIntensity, audioCtx.currentTime, 0.2);
+        }
     }
 
     if (rainIntensity > 0) {
         const posAttr = rainParticles.geometry.attributes.position;
+        const velY = (currentSeason === SEASONS.WINTER) ? 15 : 50; // snow falls slower
         for (let i = 0; i < posAttr.count; i++) {
             let px = posAttr.getX(i);
             let py = posAttr.getY(i);
             let pz = posAttr.getZ(i);
 
-            py -= delta * 50;
+            py -= delta * velY;
             
-            // World coordinate of the drop
-            let wx = Math.floor(cameraPos.x + px);
-            let wz = Math.floor(cameraPos.z + pz);
-            let wy = cameraPos.y + py;
-            
-            // Simplified occlusion: hide if below surfaceY
-            let surfaceY = getSurfaceY(wx, wz);
-            if (wy < surfaceY || py < -20) {
-                py = 40 + Math.random() * 20; // reset to top
+            // Windy drift for snow
+            if (currentSeason === SEASONS.WINTER) {
+                px += Math.sin(performance.now()*0.001 + i) * 0.1;
+                pz += Math.cos(performance.now()*0.0012 + i) * 0.1;
             }
             
+            let wx = Math.floor(cameraPos.x + px), wz = Math.floor(cameraPos.z + pz), wy = cameraPos.y + py;
+            let surfaceY = getSurfaceY(wx, wz);
+            if (wy < surfaceY || py < -20) {
+                py = 40 + Math.random() * 20; 
+            }
             posAttr.setXYZ(i, px, py, pz);
         }
         posAttr.needsUpdate = true;
@@ -699,8 +757,21 @@ function init() {
             isStorming = true;
             addChatMessage("A storm is coming!");
             initRainAudio();
+            initBlizzardAudio();
+        } else if (c === '/spring') {
+            totalGameDays = 0;
+            addChatMessage("Spring breeze fills the air...");
+        } else if (c === '/summer') {
+            totalGameDays = 10;
+            addChatMessage("The sun burns hot. Summer is here.");
+        } else if (c === '/autumn') {
+            totalGameDays = 20;
+            addChatMessage("Leaves begin to fall. Autumn arrives.");
+        } else if (c === '/winter') {
+            totalGameDays = 30;
+            addChatMessage("A cold wind blows. Winter has come.");
         } else if (c === '/help') {
-            addChatMessage("Commands: /day, /night, /sunrise, /sunset, /rain, /storm, /help");
+            addChatMessage("Commands: /day, /night, /sunrise, /sunset, /rain, /storm, /spring, /summer, /autumn, /winter, /help");
         } else if (c.startsWith('/')) {
             addChatMessage("Unknown command. Type /help for list.");
         }
@@ -1263,6 +1334,35 @@ function animate() {
     let sunAngle = gameTime;
     let dayNess = Math.sin(sunAngle); // 1 = noon, 0 = dusk, -1 = midnight
 
+    // Season Logic (every 10 days)
+    totalGameDays = (gameTime / (Math.PI * 2));
+    currentSeason = Math.floor((totalGameDays / 10) % 4);
+    seasonLerp = (totalGameDays % 10) / 10;
+
+    // Seasonal Material Colors
+    if (materials[BLOCKS.GRASS]) {
+        const seasonColors = [
+            { g: new THREE.Color(0x66cc66), l: new THREE.Color(0xffaac0) }, // Spring
+            { g: new THREE.Color(0x50b450), l: new THREE.Color(0x287828) }, // Summer
+            { g: new THREE.Color(0x90a050), l: new THREE.Color(0xd06020) }, // Autumn
+            { g: new THREE.Color(0xffffff), l: new THREE.Color(0xffffff) }  // Winter
+        ];
+        let c1 = seasonColors[currentSeason];
+        let c2 = seasonColors[(currentSeason + 1) % 4];
+        
+        // Transition only at last day of season
+        let factor = Math.max(0, (seasonLerp - 0.9) * 10); 
+        materials[BLOCKS.GRASS].color.copy(c1.g).lerp(c2.g, factor);
+        materials[100].color.copy(c1.g).lerp(c2.g, factor); // side
+        materials[BLOCKS.LEAVES].color.copy(c1.l).lerp(c2.l, factor);
+        
+        // Flora colors (flowers)
+        if (materials[BLOCKS.FLOWER_RED]) {
+             if (currentSeason === SEASONS.WINTER) materials[BLOCKS.FLOWER_RED].visible = false;
+             else materials[BLOCKS.FLOWER_RED].visible = true;
+        }
+    }
+
     // Update clouds
     updateClouds(delta, camera.position.x, camera.position.z);
     
@@ -1331,7 +1431,8 @@ function animate() {
 
     // Atmosphere
     let stormGloom = isStorming ? 0.3 : 1.0;
-    let gloom = (1.0 - (rainIntensity * 0.45)) * stormGloom;
+    let winterGloom = (currentSeason === SEASONS.WINTER) ? 0.8 : 1.0;
+    let gloom = (1.0 - (rainIntensity * 0.45)) * stormGloom * winterGloom;
     
     // Modulate lightning for player view
     let viewLightning = lightningLevel;
@@ -1342,9 +1443,13 @@ function animate() {
     dirLight.intensity = (0.8 * gloom) + (viewLightning * 1.5);
     
     const baseFogColor = new THREE.Color(dayNess > 0 ? 0x87CEEB : 0x0a0a1a);
-    // Rainy fog now adjusts based on dayNess so it's dark at night
+    // Rainy fog now adjusts based on dayNess and Season
     let rainFogHex = isStorming ? 0x111122 : 0x444455;
-    if (dayNess <= 0) rainFogHex = isStorming ? 0x020205 : 0x080810; // Dark night rain
+    if (currentSeason === SEASONS.WINTER) rainFogHex = 0xeeeeff; // White-ish winter fog
+    if (dayNess <= 0) {
+        rainFogHex = isStorming ? 0x020205 : 0x080810; // Dark night rain
+        if (currentSeason === SEASONS.WINTER) rainFogHex = 0x0a0a15;
+    }
     
     const rainFogColor = new THREE.Color(rainFogHex);
     const lightningColor = new THREE.Color(0xffffff);
@@ -1354,7 +1459,7 @@ function animate() {
 
     scene.fog.color.copy(finalFogColor);
     scene.background.copy(scene.fog.color);
-    scene.fog.far = 100 - (rainIntensity * 40) - (isStorming ? 20 : 0);
+    scene.fog.far = 100 - (rainIntensity * 40) - (isStorming ? 20 : 0) - (currentSeason === SEASONS.WINTER ? 10 : 0);
 
     // Mobs
     for (let idx = 0; idx < mobsList.length; idx++) {

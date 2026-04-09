@@ -13,7 +13,10 @@ export const BLOCKS = {
     WORKBENCH: 9,
     CHEST: 10,
     WATER: 11,
-    CACTUS: 12
+    CACTUS: 12,
+    FLOWER_RED: 13,
+    FLOWER_YELLOW: 14,
+    TALL_GRASS: 15
 };
 
 // Colors for each block
@@ -273,21 +276,50 @@ export function generateMaterials() {
     waterMat.polygonOffsetUnits = -2;
     materials[BLOCKS.WATER] = waterMat;
 
-    // Cactus - green with dark vertical lines and spine dots
-    materials[BLOCKS.CACTUS] = createCanvasTex(BLOCKS.CACTUS, (x, y) => {
-        let vary = (Math.random() - 0.5) * 10;
-        let c = BASE_COLORS[BLOCKS.CACTUS];
-        
-        // vertical ridges
-        if (x % 16 < 2) {
-             return [c[0]-30+vary, c[1]-30+vary, c[2]-30+vary];
-        }
-        
-        // spikes
-        if (Math.random() < 0.05) {
-             return [200, 200, 150]; // pale spike
-        }
-        
-        return [c[0]+vary, c[1]+vary, c[2]+vary];
     });
+    
+    // --- FLORA (Flowers & Tall Grass) ---
+    const createFloraTex = (blockId, type) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        const imgData = ctx.createImageData(size, size);
+        const data = imgData.data;
+
+        for (let i = 0; i < size * size; i++) {
+            let x = i % size, y = Math.floor(i / size);
+            let r=0, g=0, b=0, a=0;
+            
+            // Stem (Green)
+            if (x >= 28 && x <= 34 && y > 20) {
+                r=40; g=120; b=40; a=255;
+                if (Math.random() < 0.2) g+=30;
+            }
+            // Flower Head
+            if (type === 'flower') {
+                let dist = Math.sqrt(Math.pow(x-32,2) + Math.pow(y-20,2));
+                if (dist < 10) {
+                    if (blockId === BLOCKS.FLOWER_RED) { r=220; g=40; b=40; a=255; }
+                    else { r=220; g=200; b=40; a=255; }
+                    if (dist < 3) { r=255; g=255; b=100; } // center
+                }
+            } else if (type === 'grass') {
+                // High grass blades
+                let blade = Math.sin(x*0.5 + y*0.2) > 0.5 && y > (10 + Math.sin(x*0.8)*15);
+                if (blade) { r=60; g=140; b=50; a=255; }
+            }
+
+            let idx = i * 4;
+            data[idx] = r; data[idx+1] = g; data[idx+2] = b; data[idx+3] = a;
+        }
+        ctx.putImageData(imgData, 0, 0);
+        icons[blockId] = canvas.toDataURL();
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.magFilter = THREE.NearestFilter;
+        return new THREE.MeshLambertMaterial({ map: tex, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide });
+    };
+
+    materials[BLOCKS.FLOWER_RED] = createFloraTex(BLOCKS.FLOWER_RED, 'flower');
+    materials[BLOCKS.FLOWER_YELLOW] = createFloraTex(BLOCKS.FLOWER_YELLOW, 'flower');
+    materials[BLOCKS.TALL_GRASS] = createFloraTex(BLOCKS.TALL_GRASS, 'grass');
 }
