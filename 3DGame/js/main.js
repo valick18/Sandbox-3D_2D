@@ -1282,7 +1282,8 @@ function animate() {
 
     sunMesh.material.opacity = Math.max(0, Math.min(1, dayNess * 5));
     moonMesh.material.opacity = Math.max(0, Math.min(1, -dayNess * 5));
-    starsMesh.material.opacity = (dayNess > 0) ? 0 : Math.min(1.0, -dayNess * 2.0);
+    // Stars fade out as rain/storm intensity increases
+    starsMesh.material.opacity = (dayNess > 0) ? 0 : (Math.min(1.0, -dayNess * 2.0) * (1.0 - rainIntensity));
 
     // --- SHELTER DETECTION (Shared) ---
     let wx = Math.floor(camera.position.x);
@@ -1341,7 +1342,11 @@ function animate() {
     dirLight.intensity = (0.8 * gloom) + (viewLightning * 1.5);
     
     const baseFogColor = new THREE.Color(dayNess > 0 ? 0x87CEEB : 0x0a0a1a);
-    const rainFogColor = new THREE.Color(isStorming ? 0x111122 : 0x444455);
+    // Rainy fog now adjusts based on dayNess so it's dark at night
+    let rainFogHex = isStorming ? 0x111122 : 0x444455;
+    if (dayNess <= 0) rainFogHex = isStorming ? 0x020205 : 0x080810; // Dark night rain
+    
+    const rainFogColor = new THREE.Color(rainFogHex);
     const lightningColor = new THREE.Color(0xffffff);
 
     let finalFogColor = baseFogColor.clone().lerp(rainFogColor, rainIntensity);
