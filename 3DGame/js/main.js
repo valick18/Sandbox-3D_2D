@@ -108,6 +108,7 @@ let isRaining = false;
 let rainIntensity = 0; // 0..1
 let rainParticles = null;
 let rainAudioGain = null;
+let rainFilter = null;
 let lastWeatherChange = performance.now();
 
 function initRainAudio() {
@@ -122,15 +123,15 @@ function initRainAudio() {
         noise.buffer = buf;
         noise.loop = true;
 
-        const filter = audioCtx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.value = 1000;
+        rainFilter = audioCtx.createBiquadFilter();
+        rainFilter.type = 'lowpass';
+        rainFilter.frequency.value = 1200;
 
         rainAudioGain = audioCtx.createGain();
         rainAudioGain.gain.value = 0;
 
-        noise.connect(filter);
-        filter.connect(rainAudioGain);
+        noise.connect(rainFilter);
+        rainFilter.connect(rainAudioGain);
         rainAudioGain.connect(audioCtx.destination);
         noise.start();
     } catch (e) {
@@ -139,17 +140,17 @@ function initRainAudio() {
 }
 
 function initRain(scene) {
-    const count = 10000;
+    const count = 6000; // Optimized for CPU occlusion checks
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-        positions[i * 3] = (Math.random() - 0.5) * 100;
-        positions[i * 3 + 1] = Math.random() * 80;
-        positions[i * 3 + 2] = (Math.random() - 0.5) * 100;
+        positions[i * 3] = (Math.random() - 0.5) * 80;
+        positions[i * 3 + 1] = Math.random() * 60;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 80;
     }
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     const material = new THREE.PointsMaterial({
-        color: 0x8899aa,
+        color: 0x88ccff,
         size: 0.15,
         transparent: true,
         opacity: 0,
@@ -163,13 +164,44 @@ function initRain(scene) {
 function updateRain(delta, cameraPos) {
     if (!rainParticles) return;
     
-    const fadeSpeed = 0.15; // smooth transitions
+    const fadeSpeed = 0.15;
     if (isRaining && rainIntensity < 1) rainIntensity = Math.min(1, rainIntensity + delta * fadeSpeed);
     else if (!isRaining && rainIntensity > 0) rainIntensity = Math.max(0, rainIntensity - delta * fadeSpeed);
 
+    // Shelter/Depth Audio check
+    let sheltered = false;
+    let deep = false;
+    let wx = Math.floor(camera.position.x);
+    let wz = Math.floor(camera.position.z);
+    let surfaceY = getSurfaceY(wx, wz);
+    let topBlock = getBlockGlobal(wx, surfaceY - 1, wz);
+
+    let depth = (surfaceY - 1) - camera.position.y;
+    
+    if (depth > 0) {
+        // If deep enough, it fades out regardless of what's on top
+        if (depth > 8) deep = true;
+        // Only muffle (low-pass) if it's NOT leaves
+        if (topBlock !== BLOCKS.LEAVES) sheltered = true;
+    } 
+    
+    // If not already sheltered by ground, check for overhead roofs
+    if (!sheltered && !deep) {
+        for (let y = Math.floor(camera.position.y) + 1; y < Math.floor(camera.position.y) + 15; y++) {
+            let b = getBlockGlobal(wx, y, wz);
+            if (b !== BLOCKS.AIR && b !== BLOCKS.WATER && b !== BLOCKS.LEAVES) { 
+                sheltered = true; 
+                break; 
+            }
+        }
+    }
+
     rainParticles.material.opacity = rainIntensity * 0.45;
-    if (rainAudioGain) {
-        rainAudioGain.gain.setValueAtTime(rainIntensity * 0.12, audioCtx.currentTime);
+    if (rainAudioGain && rainFilter) {
+        let targetFreq = sheltered ? 400 : 1200;
+        let targetVol = deep ? 0 : (sheltered ? 0.04 : 0.12);
+        rainFilter.frequency.setTargetAtTime(targetFreq, audioCtx.currentTime, 0.2);
+        rainAudioGain.gain.setTargetAtTime(targetVol * rainIntensity, audioCtx.currentTime, 0.2);
     }
 
     if (rainIntensity > 0) {
@@ -179,8 +211,18 @@ function updateRain(delta, cameraPos) {
             let py = posAttr.getY(i);
             let pz = posAttr.getZ(i);
 
-            py -= delta * 50; // falling speed
-            if (py < -20) py += 80; // wrap up
+            py -= delta * 50;
+            
+            // World coordinate of the drop
+            let wx = Math.floor(cameraPos.x + px);
+            let wz = Math.floor(cameraPos.z + pz);
+            let wy = cameraPos.y + py;
+            
+            // Simplified occlusion: hide if below surfaceY
+            let surfaceY = getSurfaceY(wx, wz);
+            if (wy < surfaceY || py < -20) {
+                py = 40 + Math.random() * 20; // reset to top
+            }
             
             posAttr.setXYZ(i, px, py, pz);
         }
@@ -1167,180 +1209,108 @@ function animate() {
     requestAnimationFrame(animate);
 
     const time = performance.now();
+    const delta = Math.min((time - prevTime) / 1000, 0.1); // clamp delta
     
     // Process infinite world generation
     updateDynamicChunks();
 
-    // Debug View Check
-    if (controls.isLocked === true) {
+    // --- WORLD SIMULATION (Continues even if UI is open) ---
+    
+    // Update Day/Night Cycle
+    let isDay = Math.sin(gameTime) > 0;
+    let speed = isDay ? (Math.PI / 900) : (Math.PI / 600); 
+    gameTime += delta * speed;
+    let sunAngle = gameTime;
+    let dayNess = Math.sin(sunAngle); // 1 = noon, 0 = dusk, -1 = midnight
+
+    // Update clouds
+    updateClouds(delta, camera.position.x, camera.position.z);
+    
+    // Sky bodies
+    let sunDist = 350;
+    let tilt = 40; 
+    dirLight.position.set(Math.cos(sunAngle) * sunDist, Math.sin(sunAngle) * sunDist, tilt);
+    
+    const baseSunColor = new THREE.Color(0xffeb3b);
+    const sunsetSunColor = new THREE.Color(0xff8a65);
+    let colorFac = Math.pow(1.0 - Math.abs(dayNess), 3); 
+    sunMesh.material.color.copy(baseSunColor).lerp(sunsetSunColor, colorFac);
+    
+    sunMesh.position.copy(dirLight.position).add(camera.position);
+    moonMesh.position.set(-dirLight.position.x, -dirLight.position.y, -dirLight.position.z).add(camera.position);
+    starsMesh.position.copy(camera.position);
+
+    sunMesh.material.opacity = Math.max(0, Math.min(1, dayNess * 5));
+    moonMesh.material.opacity = Math.max(0, Math.min(1, -dayNess * 5));
+    starsMesh.material.opacity = (dayNess > 0) ? 0 : Math.min(1.0, -dayNess * 2.0);
+
+    // Weather
+    updateRain(delta, camera.position);
+    if (time - lastWeatherChange > 30000) {
+        if (Math.random() < 0.05) { 
+            isRaining = !isRaining;
+            if (isRaining) initRainAudio();
+        }
+        lastWeatherChange = time;
+    }
+
+    // Atmosphere
+    let gloom = 1.0 - (rainIntensity * 0.45);
+    ambientLight.intensity = 0.4 * gloom;
+    dirLight.intensity = 0.8 * gloom;
+    
+    const baseFogColor = new THREE.Color(dayNess > 0 ? 0x87CEEB : 0x0a0a1a);
+    const rainFogColor = new THREE.Color(0x444455);
+    scene.fog.color.copy(baseFogColor).lerp(rainFogColor, rainIntensity);
+    scene.background.copy(scene.fog.color);
+    scene.fog.far = 100 - (rainIntensity * 40);
+
+    // Mobs
+    for (let idx = 0; idx < mobsList.length; idx++) {
+        try { mobsList[idx].update(delta, camera.position); } catch(e) {}
+    }
+
+    // Audio volume sync
+    ambientDayTracks.forEach((track, idx) => {
+        if (idx === currentDayTrackIndex) track.volume = Math.max(0, Math.min(1, dayNess * 0.15));
+        else track.volume = 0;
+    });
+    ambientNightAudio.volume = Math.max(0, Math.min(1, -dayNess * 0.15));
+    wasDay = (dayNess > 0);
+
+    // Persistence
+    if (Math.floor(time / 2000) !== Math.floor(prevTime / 2000)) {
+        localStorage.setItem('sandbox3d_gameTime', gameTime);
+        updateDynamicSpawning();
+    }
+
+    // --- PLAYER INPUT & INTERACTION (Only if locked) ---
+    if (controls.isLocked === true && !isChatOpen) {
+        // Block looking feedback
         raycaster.setFromCamera(center, camera);
         let collidable = scene.children.filter(obj => !obj.userData.ignoreRaycast);
         let intersects = raycaster.intersectObjects(collidable);
-        let lookText = "";
         if (intersects.length > 0 && intersects[0].distance <= 8) {
-            let point = intersects[0].point;
-            let normal = intersects[0].face.normal;
-            let targetX = Math.floor(point.x - normal.x * 0.1);
-            let targetY = Math.floor(point.y - normal.y * 0.1);
-            let targetZ = Math.floor(point.z - normal.z * 0.1);
-            let id = getBlockGlobal(targetX, targetY, targetZ);
-            lookText = id !== BLOCKS.AIR ? BLOCK_NAMES[id] : "";
-        }
-        document.getElementById('debug-text').innerText = lookText ? `Looking at: ${lookText}` : "";
-    }
-
-    // Only allow player movement and interactions if no UI is open
-    if (controls.isLocked === true && !isChatOpen) {
-        const delta = Math.min((time - prevTime) / 1000, 0.1); // clamp delta
-        
-        // Update Day/Night Cycle
-        let isDay = Math.sin(gameTime) > 0;
-        let speed = isDay ? (Math.PI / 900) : (Math.PI / 600); // Day: 15m, Night: 10m
-        gameTime += delta * speed;
-        let sunAngle = gameTime;
-        
-        let dayNess = Math.sin(sunAngle); // 1 = noon, 0 = dusk, -1 = midnight
-
-        // Update clouds
-        updateClouds(delta, camera.position.x, camera.position.z);
-        // Clean East-to-West trajectory
-        let sunDist = 350;
-        let tilt = 40; // Slight southern tilt for aesthetics
-        dirLight.position.set(
-            Math.cos(sunAngle) * sunDist, // East-West
-            Math.sin(sunAngle) * sunDist, // Up-Down
-            tilt                           // Fixed tilt
-        );
-        
-        // Atmospheric Sun Color (lerp between yellow and orange-red)
-        const baseSunColor = new THREE.Color(0xffeb3b);
-        const sunsetSunColor = new THREE.Color(0xff8a65);
-        let colorFac = Math.pow(1.0 - Math.abs(dayNess), 3); // More red near horizon
-        sunMesh.material.color.copy(baseSunColor).lerp(sunsetSunColor, colorFac);
-        
-        sunMesh.position.copy(dirLight.position).add(camera.position);
-        moonMesh.position.set(-dirLight.position.x, -dirLight.position.y, -dirLight.position.z).add(camera.position);
-        starsMesh.position.copy(camera.position);
-
-        // Fade celestial bodies near horizon to prevent seeing them through the maps bottom
-        sunMesh.material.opacity = Math.max(0, Math.min(1, dayNess * 5));
-        moonMesh.material.opacity = Math.max(0, Math.min(1, -dayNess * 5));
-        
-        // Star visibility logic (strictly zero during day)
-        starsMesh.material.opacity = (dayNess > 0) ? 0 : Math.min(1.0, -dayNess * 2.0);
-
-        // --- WEATHER EFFECTS ---
-        updateRain(delta, camera.position);
-        
-        // Automatic weather cycle (try every 30 seconds)
-        if (performance.now() - lastWeatherChange > 30000) {
-            if (Math.random() < 0.05) { // 5% chance to toggle
-                isRaining = !isRaining;
-                if (isRaining) initRainAudio();
-            }
-            lastWeatherChange = performance.now();
+            let p = intersects[0].point;
+            let n = intersects[0].face.normal;
+            let tid = getBlockGlobal(Math.floor(p.x - n.x * 0.1), Math.floor(p.y - n.y * 0.1), Math.floor(p.z - n.z * 0.1));
+            document.getElementById('debug-text').innerText = tid !== BLOCKS.AIR ? `Looking at: ${BLOCK_NAMES[tid]}` : "";
         }
 
-        // Gloominess / Darkness during rain
-        let gloom = 1.0 - (rainIntensity * 0.45);
-        ambientLight.intensity = 0.4 * gloom;
-        dirLight.intensity = 0.8 * gloom;
-        
-        // Fog Slate Gray during rain
-        const baseFogColor = new THREE.Color(dayNess > 0 ? 0x87CEEB : 0x0a0a1a);
-        const rainFogColor = new THREE.Color(0x444455);
-        scene.fog.color.copy(baseFogColor).lerp(rainFogColor, rainIntensity);
-        scene.background.copy(scene.fog.color);
-        scene.fog.far = 100 - (rainIntensity * 40); // Close fog during rain
-
-        // Music Playlist Switcher (on each sunrise)
-        if (dayNess > 0 && !wasDay) {
-            currentDayTrackIndex = Math.floor(Math.random() * ambientDayTracks.length);
-        }
-        wasDay = (dayNess > 0);
-
-        // Save time and spawn mobs periodically (every 2 seconds for more life)
-        if (Math.floor(time / 2000) !== Math.floor(prevTime / 2000)) {
-            localStorage.setItem('sandbox3d_gameTime', gameTime);
-            updateDynamicSpawning();
-        }
-
-        // Dynamically adjust ambient audio volume
-        ambientDayTracks.forEach((track, idx) => {
-            if (idx === currentDayTrackIndex) {
-                track.volume = Math.max(0, Math.min(1, dayNess * 0.15));
-            } else {
-                track.volume = 0;
-            }
-        });
-        ambientNightAudio.volume = Math.max(0, Math.min(1, -dayNess * 0.15));
-
-        // Detect Water
-        let feetBlock = getBlockGlobal(
-            Math.floor(camera.position.x),
-            Math.floor(camera.position.y - 1.7),
-            Math.floor(camera.position.z)
-        );
-        let headBlock = getBlockGlobal(
-            Math.floor(camera.position.x),
-            Math.floor(camera.position.y - 0.2),
-            Math.floor(camera.position.z)
-        );
-        let cameraBlock = getBlockGlobal(
-            Math.floor(camera.position.x),
-            Math.floor(camera.position.y),
-            Math.floor(camera.position.z)
-        );
+        // Physics
+        let headBlock = getBlockGlobal(Math.floor(camera.position.x), Math.floor(camera.position.y - 0.2), Math.floor(camera.position.z));
+        let feetBlock = getBlockGlobal(Math.floor(camera.position.x), Math.floor(camera.position.y - 1.7), Math.floor(camera.position.z));
+        let cameraBlock = getBlockGlobal(Math.floor(camera.position.x), Math.floor(camera.position.y), Math.floor(camera.position.z));
         
         let inWater = headBlock === BLOCKS.WATER || feetBlock === BLOCKS.WATER;
         let cameraInWater = cameraBlock === BLOCKS.WATER;
-        
-        // Background color blending
-        if (cameraInWater) {
-             // Underwater blue fog effect
-             let waterFog = new THREE.Color().setHSL(0.6, 0.8, dayNess > 0 ? 0.3 : 0.1);
-             scene.background.copy(waterFog);
-             scene.fog.color.copy(waterFog);
-             scene.fog.near = 0.1;
-             scene.fog.far = 15; // very thick fog underwater
-             dirLight.intensity = dayNess > 0 ? dayNess * 0.4 : 0;
-             ambientLight.intensity = Math.max(0.1, dayNess * 0.4);
-             starsMesh.material.opacity = 0;
-        } else {
-            scene.fog.near = 15;
-            scene.fog.far = 100;
-            
-            if (dayNess > 0) {
-                // Day
-                let h = 0.55; // Blue
-                let s = 0.6;
-                let l = Math.max(0.05, dayNess * 0.6);
-                scene.background.setHSL(h, s, l);
-                scene.fog.color.setHSL(h, s, l);
-                dirLight.intensity = dayNess * 0.8;
-                ambientLight.intensity = Math.max(0.1, dayNess * 0.4);
-                starsMesh.material.opacity = 0;
-            } else {
-                // Night
-                scene.background.setHex(0x050515);
-                scene.fog.color.setHex(0x050515);
-                dirLight.intensity = 0;
-                ambientLight.intensity = 0.1; // Moon approximation
-                starsMesh.material.opacity = Math.min(1.0, -dayNess * 1.5);
-            }
-        }
 
         // Gravity / Buoyancy
         if (!flyMode) {
             if (inWater) {
-                // Swimming physics
-                velocity.y -= 8 * delta; // Much slower gravity / sinking
-                if (velocity.y < -3) velocity.y = -3; // Terminal swim sink speed
-                
-                if (keys['Space']) {
-                     velocity.y += 20 * delta; // Swim up
-                     if (velocity.y > 6) velocity.y = 6;
-                }
+                velocity.y -= 8 * delta;
+                if (velocity.y < -3) velocity.y = -3;
+                if (keys['Space']) { velocity.y += 20 * delta; if (velocity.y > 6) velocity.y = 6; }
             } else {
                 velocity.y -= 25 * delta;
                 if (velocity.y < -30) velocity.y = -30;
@@ -1351,131 +1321,47 @@ function animate() {
             else velocity.y = 0;
         }
 
-        // Get camera yaw direction (horizontal only — ignore pitch)
+        // Movement
         const camQuat = camera.quaternion;
-        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camQuat);
-        forward.y = 0; forward.normalize();
-        const right = new THREE.Vector3(1, 0, 1).applyQuaternion(camQuat); // wait, applying 1,0,0 earlier but I will set exactly right vector using cross of forward
-        right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
-
-        // Build desired move vector this frame
-        let speedMult = isSprinting ? 1.6 : 1.0;
-        if (flyMode) speedMult = 2.5; // Fast fly
-        if (inWater && !flyMode) speedMult *= 0.5; // Water heavily slows movement
+        const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camQuat); forward.y = 0; forward.normalize();
+        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0,1,0)).normalize();
         
-        const WALK_SPEED = 4.5 * speedMult;
-        let moveVec = new THREE.Vector3(0, 0, 0);
-        if (moveForward)  moveVec.addScaledVector(forward,  WALK_SPEED);
-        if (moveBackward) moveVec.addScaledVector(forward, -WALK_SPEED);
-        if (moveRight)    moveVec.addScaledVector(right,    WALK_SPEED);
-        if (moveLeft)     moveVec.addScaledVector(right,   -WALK_SPEED);
+        let speedMult = (isSprinting ? 1.6 : 1.0) * (flyMode ? 2.5 : 1.0) * (inWater && !flyMode ? 0.5 : 1.0);
+        let moveVec = new THREE.Vector3(0,0,0);
+        if (moveForward) moveVec.addScaledVector(forward, 4.5 * speedMult);
+        if (moveBackward) moveVec.addScaledVector(forward, -4.5 * speedMult);
+        if (moveRight) moveVec.addScaledVector(right, 4.5 * speedMult);
+        if (moveLeft) moveVec.addScaledVector(right, -4.5 * speedMult);
 
-        let worldDx = moveVec.x * delta;
-        let worldDz = moveVec.z * delta;
-        let dy = velocity.y * delta;
+        let preX = camera.position.x, preZ = camera.position.z;
+        let dy = velocity.y * delta, dx = moveVec.x * delta, dz = moveVec.z * delta;
 
-        // Sweep collision on each axis independently
-        const STEP = 0.04;
-        let stepsY = Math.max(1, Math.ceil(Math.abs(dy) / STEP));
-        let stepsX = Math.max(1, Math.ceil(Math.abs(worldDx) / STEP));
-        let stepsZ = Math.max(1, Math.ceil(Math.abs(worldDz) / STEP));
-
-        // --- Y ---
-        let syStep = dy / stepsY;
-        for (let i = 0; i < stepsY; i++) {
-            if (!checkAABB(camera.position.x, camera.position.y + syStep, camera.position.z)) {
-                camera.position.y += syStep;
-            } else {
-                if (syStep < 0) canJump = true;
-                velocity.y = 0;
-                break;
-            }
-        }
-        let preX = camera.position.x;
-        let preZ = camera.position.z;
-
-        // --- X ---
-        let sxStep = worldDx / stepsX;
-        for (let i = 0; i < stepsX; i++) {
-            if (!checkAABB(camera.position.x + sxStep, camera.position.y, camera.position.z)) {
-                camera.position.x += sxStep;
-            } else { break; }
-        }
-        // --- Z ---
-        let szStep = worldDz / stepsZ;
-        for (let i = 0; i < stepsZ; i++) {
-            if (!checkAABB(camera.position.x, camera.position.y, camera.position.z + szStep)) {
-                camera.position.z += szStep;
-            } else { break; }
-        }
-
-        // Respawn if falling off the map
-        if (camera.position.y < -50) {
-            camera.position.set(0, 80, 0); 
-            velocity.y = 0;
-            velocity.x = 0;
-            velocity.z = 0;
-            for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
-                if (getBlockGlobal(0, y, 0) !== BLOCKS.AIR) {
-                    camera.position.y = y + 3;
-                    break;
-                }
-            }
-        }
-
-        // Real displacement (zero if blocked by wall)
-        let realDx = Math.abs(camera.position.x - preX);
-        let realDz = Math.abs(camera.position.z - preZ);
+        // Simple sweep Y
+        if (!checkAABB(camera.position.x, camera.position.y + dy, camera.position.z)) {
+            camera.position.y += dy;
+        } else { if (dy < 0) canJump = true; velocity.y = 0; }
         
-        // Procedural Footstep Audio — only when truly moving, not just pressing against a wall
+        // Simple sweep X/Z
+        if (!checkAABB(camera.position.x + dx, camera.position.y, camera.position.z)) camera.position.x += dx;
+        if (!checkAABB(camera.position.x, camera.position.y, camera.position.z + dz)) camera.position.z += dz;
+
+        // Footsteps
         const isMoving = moveForward || moveBackward || moveLeft || moveRight;
-        if (!flyMode && canJump && isMoving && (realDx + realDz) > 0.001 && !inWater) {
+        if (!flyMode && canJump && isMoving && !inWater) {
             if (!window.footstepTimer) window.footstepTimer = 0.3;
             window.footstepTimer -= delta;
             if (window.footstepTimer <= 0) {
-                let feetBlock = getBlockGlobal(
-                    Math.floor(camera.position.x),
-                    Math.floor(camera.position.y - 1.7),
-                    Math.floor(camera.position.z)
-                );
-                let pitch = 150;
-                if (feetBlock === BLOCKS.WOOD) pitch = 250;
-                else if (feetBlock === BLOCKS.SAND) pitch = 100;
-                playSound(pitch + Math.random()*20, 0.03);
+                let p = 150 + (feetBlock === BLOCKS.WOOD ? 100 : (feetBlock === BLOCKS.SAND ? -50 : 0));
+                playSound(p + Math.random()*20, 0.03);
                 window.footstepTimer = 0.35;
             }
-        } else if (!isMoving) {
-            window.footstepTimer = 0.1;
         }
         
-        // Mobs logic
-        let dumpStr = "";
-        for (let idx = 0; idx < mobsList.length; idx++) {
-            let mob = mobsList[idx];
-            try {
-                mob.update(delta, camera.position);
-                if (idx < 5) {
-                    let typeChar = mob.isBird ? 'B' : (mob.isDeer ? 'D' : 'R');
-                    dumpStr += `(${typeChar}:${mob.group.position.y.toFixed(1)}) `;
-                }
-            } catch(e) {
-                console.error("Mob update error:", e);
-                dumpStr += "[ERR] ";
-            }
-        }
-        document.getElementById('debug-text').innerText = `${Math.round(1/delta)} | M: ${mobsList.length} ${dumpStr}`;
-
-        // Ambient wind
         tickWind(delta);
 
-        // Save player position every ~3 seconds
         _posSaveTimer -= delta;
         if (_posSaveTimer <= 0) {
-            localStorage.setItem('sandbox3d_pos', JSON.stringify({
-                x: camera.position.x,
-                y: camera.position.y,
-                z: camera.position.z
-            }));
+            localStorage.setItem('sandbox3d_pos', JSON.stringify({x:camera.position.x, y:camera.position.y, z:camera.position.z}));
             _posSaveTimer = 3.0;
         }
     }
