@@ -105,11 +105,58 @@ function updateInventoryUI() {
 
 // --- WEATHER & RAIN ---
 let isRaining = false;
+let isStorming = false;
 let rainIntensity = 0; // 0..1
 let rainParticles = null;
 let rainAudioGain = null;
 let rainFilter = null;
 let lastWeatherChange = performance.now();
+let lightningLevel = 0;
+let nextLightningTime = 0;
+let thunderTimeout = null;
+
+function playThunder(dist = 1) {
+    if (!audioCtx) return;
+    try {
+        const dur = 2 + Math.random() * 3;
+        const bufSize = audioCtx.sampleRate * dur;
+        const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+        const data = buf.getChannelData(0);
+        // Create brown-ish noise
+        let lastOut = 0;
+        for (let i = 0; i < bufSize; i++) {
+            let white = Math.random() * 2 - 1;
+            data[i] = (lastOut + (0.02 * white)) / 1.02;
+            lastOut = data[i];
+            data[i] *= 3.5; // boost
+        }
+
+        const src = audioCtx.createBufferSource();
+        src.buffer = buf;
+
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 100 + Math.random() * 200;
+
+        const gain = audioCtx.createGain();
+        let vol = (0.3 + Math.random() * 0.4) / dist;
+        
+        // Muffle if indoor
+        let wx = Math.floor(camera.position.x), wz = Math.floor(camera.position.z);
+        let surfaceY = getSurfaceY(wx, wz);
+        if (camera.position.y < surfaceY - 1) vol *= 0.3;
+        if (camera.position.y < surfaceY - 8) vol = 0;
+
+        gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(vol, audioCtx.currentTime + 0.1);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+
+        src.connect(filter);
+        filter.connect(gain);
+        gain.connect(audioCtx.destination);
+        src.start();
+    } catch (e) {}
+}
 
 function initRainAudio() {
     if (rainAudioGain || !audioCtx) return;
@@ -657,10 +704,16 @@ function init() {
             addChatMessage("Time set to Sunset");
         } else if (c === '/rain') {
             isRaining = !isRaining;
+            isStorming = false;
             addChatMessage(isRaining ? "It starts to rain..." : "The rain stops.");
             initRainAudio();
+        } else if (c === '/storm') {
+            isRaining = true;
+            isStorming = true;
+            addChatMessage("A storm is coming!");
+            initRainAudio();
         } else if (c === '/help') {
-            addChatMessage("Commands: /day, /night, /sunrise, /sunset, /rain, /help");
+            addChatMessage("Commands: /day, /night, /sunrise, /sunset, /rain, /storm, /help");
         } else if (c.startsWith('/')) {
             addChatMessage("Unknown command. Type /help for list.");
         }
@@ -1247,23 +1300,49 @@ function animate() {
     // Weather
     updateRain(delta, camera.position);
     if (time - lastWeatherChange > 30000) {
-        if (Math.random() < 0.05) { 
-            isRaining = !isRaining;
+        let rolled = Math.random();
+        if (rolled < 0.05) { // 5% chance to toggle
+            if (!isRaining) { isRaining = true; isStorming = Math.random() < 0.3; }
+            else { isRaining = false; isStorming = false; }
             if (isRaining) initRainAudio();
         }
         lastWeatherChange = time;
     }
 
+    // Storm Lightning Logic
+    if (isStorming && isRaining) {
+        if (time > nextLightningTime) {
+            lightningLevel = 1.0;
+            // Flicker effect
+            setTimeout(() => { lightningLevel = 0.8; }, 50);
+            setTimeout(() => { lightningLevel = 1.0; }, 100);
+            
+            // Random thunder delay
+            let delay = 500 + Math.random() * 2500;
+            setTimeout(() => { playThunder(delay / 1000); }, delay);
+            
+            nextLightningTime = time + 5000 + Math.random() * 15000;
+        }
+    }
+    if (lightningLevel > 0) lightningLevel -= delta * 5.0; // Quick fade
+    if (lightningLevel < 0.01) lightningLevel = 0;
+
     // Atmosphere
-    let gloom = 1.0 - (rainIntensity * 0.45);
-    ambientLight.intensity = 0.4 * gloom;
-    dirLight.intensity = 0.8 * gloom;
+    let stormGloom = isStorming ? 0.3 : 1.0;
+    let gloom = (1.0 - (rainIntensity * 0.45)) * stormGloom;
+    ambientLight.intensity = (0.4 * gloom) + (lightningLevel * 2.0);
+    dirLight.intensity = (0.8 * gloom) + (lightningLevel * 1.5);
     
     const baseFogColor = new THREE.Color(dayNess > 0 ? 0x87CEEB : 0x0a0a1a);
-    const rainFogColor = new THREE.Color(0x444455);
-    scene.fog.color.copy(baseFogColor).lerp(rainFogColor, rainIntensity);
+    const rainFogColor = new THREE.Color(isStorming ? 0x111122 : 0x444455);
+    const lightningColor = new THREE.Color(0xffffff);
+
+    let finalFogColor = baseFogColor.clone().lerp(rainFogColor, rainIntensity);
+    if (lightningLevel > 0) finalFogColor.lerp(lightningColor, lightningLevel * 0.8);
+
+    scene.fog.color.copy(finalFogColor);
     scene.background.copy(scene.fog.color);
-    scene.fog.far = 100 - (rainIntensity * 40);
+    scene.fog.far = 100 - (rainIntensity * 40) - (isStorming ? 20 : 0);
 
     // Mobs
     for (let idx = 0; idx < mobsList.length; idx++) {
