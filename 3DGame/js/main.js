@@ -103,6 +103,92 @@ function updateInventoryUI() {
     localStorage.setItem('sandbox3d_inventory', JSON.stringify(inventory.slots));
 }
 
+// --- WEATHER & RAIN ---
+let isRaining = false;
+let rainIntensity = 0; // 0..1
+let rainParticles = null;
+let rainAudioGain = null;
+let lastWeatherChange = performance.now();
+
+function initRainAudio() {
+    if (rainAudioGain || !audioCtx) return;
+    try {
+        const bufSize = 2 * audioCtx.sampleRate;
+        const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = buf;
+        noise.loop = true;
+
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 1000;
+
+        rainAudioGain = audioCtx.createGain();
+        rainAudioGain.gain.value = 0;
+
+        noise.connect(filter);
+        filter.connect(rainAudioGain);
+        rainAudioGain.connect(audioCtx.destination);
+        noise.start();
+    } catch (e) {
+        console.error("Rain audio error", e);
+    }
+}
+
+function initRain(scene) {
+    const count = 10000;
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 100;
+        positions[i * 3 + 1] = Math.random() * 80;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 100;
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const material = new THREE.PointsMaterial({
+        color: 0x8899aa,
+        size: 0.15,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false
+    });
+    rainParticles = new THREE.Points(geometry, material);
+    rainParticles.userData = { ignoreRaycast: true };
+    scene.add(rainParticles);
+}
+
+function updateRain(delta, cameraPos) {
+    if (!rainParticles) return;
+    
+    const fadeSpeed = 0.15; // smooth transitions
+    if (isRaining && rainIntensity < 1) rainIntensity = Math.min(1, rainIntensity + delta * fadeSpeed);
+    else if (!isRaining && rainIntensity > 0) rainIntensity = Math.max(0, rainIntensity - delta * fadeSpeed);
+
+    rainParticles.material.opacity = rainIntensity * 0.45;
+    if (rainAudioGain) {
+        rainAudioGain.gain.setValueAtTime(rainIntensity * 0.12, audioCtx.currentTime);
+    }
+
+    if (rainIntensity > 0) {
+        const posAttr = rainParticles.geometry.attributes.position;
+        for (let i = 0; i < posAttr.count; i++) {
+            let px = posAttr.getX(i);
+            let py = posAttr.getY(i);
+            let pz = posAttr.getZ(i);
+
+            py -= delta * 50; // falling speed
+            if (py < -20) py += 80; // wrap up
+            
+            posAttr.setXYZ(i, px, py, pz);
+        }
+        posAttr.needsUpdate = true;
+        rainParticles.position.set(cameraPos.x, cameraPos.y, cameraPos.z);
+    }
+}
+
 function updateCraftingUI() {
     const list = document.getElementById('recipe-list');
     list.innerHTML = '';
@@ -451,6 +537,8 @@ function init() {
         }
     }
 
+    initRain(scene);
+
     // Spawn Mobs after chunks are built — find valid surface positions
     try {
         spawnMobsOnSurface(scene);
@@ -525,8 +613,12 @@ function init() {
         } else if (c === '/sunset') {
             gameTime = Math.PI;
             addChatMessage("Time set to Sunset");
+        } else if (c === '/rain') {
+            isRaining = !isRaining;
+            addChatMessage(isRaining ? "It starts to rain..." : "The rain stops.");
+            initRainAudio();
         } else if (c === '/help') {
-            addChatMessage("Commands: /day, /night, /sunrise, /sunset, /help");
+            addChatMessage("Commands: /day, /night, /sunrise, /sunset, /rain, /help");
         } else if (c.startsWith('/')) {
             addChatMessage("Unknown command. Type /help for list.");
         }
@@ -555,9 +647,10 @@ function init() {
         // Don't show the pause overlay when any UI is open
         if (craftingMode === 'none') {
             instructions.style.display = 'flex';
+            // ONLY pause ambient music if we are actually at the pause menu (no UI open)
+            ambientDayTracks.forEach(t => t.pause());
+            ambientNightAudio.pause();
         }
-        ambientDayTracks.forEach(t => t.pause());
-        ambientNightAudio.pause();
     });
     
     scene.add(controls.getObject());
@@ -1134,7 +1227,31 @@ function animate() {
         moonMesh.material.opacity = Math.max(0, Math.min(1, -dayNess * 5));
         
         // Star visibility logic (strictly zero during day)
-        starsMesh.material.opacity = dayNess > 0 ? 0 : Math.min(1.0, -dayNess * 2.0);
+        starsMesh.material.opacity = (dayNess > 0) ? 0 : Math.min(1.0, -dayNess * 2.0);
+
+        // --- WEATHER EFFECTS ---
+        updateRain(delta, camera.position);
+        
+        // Automatic weather cycle (try every 30 seconds)
+        if (performance.now() - lastWeatherChange > 30000) {
+            if (Math.random() < 0.05) { // 5% chance to toggle
+                isRaining = !isRaining;
+                if (isRaining) initRainAudio();
+            }
+            lastWeatherChange = performance.now();
+        }
+
+        // Gloominess / Darkness during rain
+        let gloom = 1.0 - (rainIntensity * 0.45);
+        ambientLight.intensity = 0.4 * gloom;
+        dirLight.intensity = 0.8 * gloom;
+        
+        // Fog Slate Gray during rain
+        const baseFogColor = new THREE.Color(dayNess > 0 ? 0x87CEEB : 0x0a0a1a);
+        const rainFogColor = new THREE.Color(0x444455);
+        scene.fog.color.copy(baseFogColor).lerp(rainFogColor, rainIntensity);
+        scene.background.copy(scene.fog.color);
+        scene.fog.far = 100 - (rainIntensity * 40); // Close fog during rain
 
         // Music Playlist Switcher (on each sunrise)
         if (dayNess > 0 && !wasDay) {
