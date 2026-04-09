@@ -375,19 +375,39 @@ export class Chunk {
                                     }
                                 }
                             } else if (blockId === BLOCKS.SNOW_LAYER) {
-                                // Special Snow Layer: Thin quad at the top
-                                if (index === 0) { // Only one quad
+                                // 3D Minecraft-style Snow Layer: Thin cuboid (Top + 4 Sides)
+                                if (index === 0) { 
                                     if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
                                     let mf = solidFaces[matId];
+                                    const h = 0.125; // 2 pixels high (1/8 of block)
+                                    
+                                    // 1. Top face
                                     let startV = mf.pos.length / 3;
-                                    const tileHeight = 0.05; // Slightly offset to avoid Z-fighting
-                                    const snowPlane = [[0, tileHeight, 0], [1, tileHeight, 0], [1, tileHeight, 1], [0, tileHeight, 1]];
-                                    for (let i=0; i<4; i++) {
-                                        mf.pos.push(x + snowPlane[i][0], y + snowPlane[i][1], z + snowPlane[i][2]);
-                                        mf.norm.push(0, 1, 0);
-                                        mf.uv.push(uvSeq[i][0], uvSeq[i][1]);
+                                    const top = [[0,h,0],[1,h,0],[1,h,1],[0,h,1]];
+                                    for(let p of top) { 
+                                        mf.pos.push(x + p[0], y + p[1], z + p[2]); 
+                                        mf.norm.push(0, 1, 0); 
                                     }
+                                    mf.uv.push(0,0, 1,0, 1,1, 0,1);
                                     mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
+
+                                    // 2. Side faces (North, South, East, West)
+                                    const sides = [
+                                        [[0,0,1],[1,0,1],[1,h,1],[0,h,1]], // Z+
+                                        [[1,0,0],[0,0,0],[0,h,0],[1,h,0]], // Z-
+                                        [[1,0,1],[1,0,0],[1,h,0],[1,h,1]], // X+
+                                        [[0,0,0],[0,0,1],[0,h,1],[0,h,0]]  // X-
+                                    ];
+                                    const norms = [[0,0,1],[0,0,-1],[1,0,0],[-1,0,0]];
+                                    for(let si=0; si<4; si++) {
+                                        startV = mf.pos.length / 3;
+                                        for(let p of sides[si]) {
+                                            mf.pos.push(x + p[0], y + p[1], z + p[2]);
+                                            mf.norm.push(norms[si][0], norms[si][1], norms[si][2]);
+                                        }
+                                        mf.uv.push(0,1, 1,1, 1,0, 0,0); // Mapping bottom of side to texture
+                                        mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
+                                    }
                                 }
                             } else {
                                 if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
