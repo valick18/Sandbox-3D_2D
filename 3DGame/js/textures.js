@@ -100,6 +100,7 @@ export function generateMaterials() {
     // Grass Side - greyscale top part for tinting
     materials[100] = createCanvasTex(100, (x, y) => {
         let nx = (x / 64) * Math.PI * 2;
+        let ny = (y / 64) * Math.PI * 2;
         let drop = 20 + Math.sin(nx * 3) * 6 + Math.cos(nx * 7) * 4;
         let vary = (Math.random() - 0.5) * 20;
         if (y < drop) {
