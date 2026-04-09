@@ -141,13 +141,96 @@ function buildDeer() {
     return root;
 }
 
+// ---- BIRD ----
+function buildBird(type = 'sparrow') {
+    let root = new THREE.Group();
+    root.userData = { isMob: true, isBird: true, birdType: type };
+
+    let bodyColor, wingColor, beakColor, scale;
+    
+    if (type === 'crow') {
+        bodyColor = 0x222222;
+        wingColor = 0x111111;
+        beakColor = 0x111111;
+        scale = 1.0;
+    } else if (type === 'cormorant') {
+        bodyColor = 0xeeeeee;
+        wingColor = 0x999999;
+        beakColor = 0xffa500;
+        scale = 1.4;
+    } else { // sparrow
+        bodyColor = 0x8b4513;
+        wingColor = 0x5d2e0c;
+        beakColor = 0xcd853f;
+        scale = 0.6;
+    }
+
+    // Body
+    let body = makePart(0.18 * scale, 0.15 * scale, 0.25 * scale, bodyColor, 0, 0, 0);
+    root.add(body);
+
+    // Head
+    let head = makePart(0.12 * scale, 0.12 * scale, 0.12 * scale, bodyColor, 0, 0.10 * scale, 0.12 * scale);
+    root.add(head);
+
+    // Beak
+    let beakW = type === 'cormorant' ? 0.05 : 0.04;
+    let beakH = type === 'cormorant' ? 0.04 : 0.04;
+    let beakD = type === 'cormorant' ? 0.18 : 0.08;
+    let beak = makePart(beakW * scale, beakH * scale, beakD * scale, beakColor, 0, 0.08 * scale, 0.22 * scale);
+    root.add(beak);
+
+    // Eyes
+    let eye = makePart(0.02 * scale, 0.02 * scale, 0.01 * scale, 0x000000);
+    let eyeL = eye.clone(); eyeL.position.set(-0.06 * scale, 0.12 * scale, 0.16 * scale);
+    let eyeR = eye.clone(); eyeR.position.set( 0.06 * scale, 0.12 * scale, 0.16 * scale);
+    root.add(eyeL, eyeR);
+
+    // Wings (Groups for rotation pivot at body edge)
+    let wingLGroup = new THREE.Group();
+    wingLGroup.position.set(-0.09 * scale, 0.02 * scale, 0);
+    let wingL = makePart(0.25 * scale, 0.02 * scale, 0.18 * scale, wingColor, -0.12 * scale, 0, 0);
+    wingLGroup.add(wingL);
+    
+    let wingRGroup = new THREE.Group();
+    wingRGroup.position.set(0.09 * scale, 0.02 * scale, 0);
+    let wingR = makePart(0.25 * scale, 0.02 * scale, 0.18 * scale, wingColor, 0.12 * scale, 0, 0);
+    wingRGroup.add(wingR);
+    
+    root.add(wingLGroup, wingRGroup);
+
+    // Legs
+    let legL = makePart(0.02 * scale, 0.12 * scale, 0.02 * scale, 0x333333, -0.05 * scale, -0.12 * scale, 0);
+    let legR = makePart(0.02 * scale, 0.12 * scale, 0.02 * scale, 0x333333,  0.05 * scale, -0.12 * scale, 0);
+    root.add(legL, legR);
+
+    // Tail
+    let tail = makePart(0.14 * scale, 0.02 * scale, 0.15 * scale, bodyColor, 0, -0.02 * scale, -0.18 * scale);
+    tail.rotation.x = 0.2;
+    root.add(tail);
+
+    root.userData.wings = { l: wingLGroup, r: wingRGroup };
+    root.userData.legs = { l: legL, r: legR };
+
+    return root;
+}
+
 export class Mob {
-    constructor(scene, getBlockFn, isDeer=false) {
+    constructor(scene, getBlockFn, type = 'rabbit') {
         this.scene = scene;
         this.getBlock = getBlockFn;
-        this.isDeer = isDeer;
+        this.type = type;
+        this.isDeer = type === 'deer';
+        this.isBird = ['crow', 'cormorant', 'sparrow'].includes(type);
 
-        this.group = isDeer ? buildDeer() : buildRabbit();
+        if (this.isBird) {
+            this.group = buildBird(this.type);
+        } else if (this.isDeer) {
+            this.group = buildDeer();
+        } else {
+            this.group = buildRabbit();
+        }
+
         this.group.position.set(Math.random()*30-15, 80, Math.random()*30-15);
         this.group.userData.isMob = true;
         this.group.userData.mob = this;
@@ -163,18 +246,21 @@ export class Mob {
         this.scene.add(this.group);
 
         this.velocity = new THREE.Vector3();
-        this.health = isDeer ? 3 : 1;
+        this.health = (type === 'deer' || type === 'cormorant') ? 3 : 1;
 
-        // Wander AI state — start moving immediately so mob finds ground fast
-        this.wanderTimer = Math.random() * 0.5; // short initial delay
+        this.birdState = 'flying'; // 'flying', 'landing', 'sitting'
+        this.flyTarget = new THREE.Vector3();
+        this.flapTimer = 0;
+
+        // Wander AI state
+        this.wanderTimer = Math.random() * 0.5;
         this.targetDir = new THREE.Vector3((Math.random()-0.5), 0, (Math.random()-0.5)).normalize();
-        this.isMoving = true; // start moving right away
+        this.isMoving = true;
         this.restTimer = 0;
 
-        // Leg animation
+        // State & animation flags
+        this.onGround = false;
         this.legPhase = 0;
-
-        // Rabbit hop cooldown timer (prevents 12 hops/sec at 60fps)
         this.hopTimer = 0;
 
         mobsList.push(this);
@@ -232,11 +318,20 @@ export class Mob {
         let inWater = blockAtCenter === BLOCKS.WATER;
 
         // Gravity & Buoyancy
-        if (inWater) {
-             this.velocity.y += 12 * delta; // float up
-             if(this.velocity.y > 3) this.velocity.y = 3;
+        if (this.isBird && this.birdState !== 'sitting') {
+            // Birds handle their own flight gravity/lift
+            if (this.birdState === 'flying') {
+                this.velocity.y += (Math.sin(performance.now() * 0.005) * 2 - this.velocity.y) * delta * 2;
+            } else if (this.birdState === 'landing') {
+                this.velocity.y -= 5 * delta;
+            }
         } else {
-             this.velocity.y -= (this.isDeer ? 30 : 25) * delta;
+            if (inWater) {
+                 this.velocity.y += 12 * delta; // float up
+                 if(this.velocity.y > 3) this.velocity.y = 3;
+            } else {
+                 this.velocity.y -= (this.isDeer ? 30 : 25) * delta;
+            }
         }
 
         let halfH = this.isDeer ? 0.96 : 0.20;
@@ -245,40 +340,68 @@ export class Mob {
 
         let dist = this.group.position.distanceTo(playerPos);
 
-        // ---- Wander / flee AI ----
-        this.wanderTimer -= delta;
-        if(this.wanderTimer <= 0) {
-            let fleeing = (this.isDeer && dist < 10) || (!this.isDeer && dist < 5);
-            if(fleeing) {
-                // Run away from player, but more smoothly
-                let awayDir = new THREE.Vector3().subVectors(this.group.position, playerPos).normalize();
-                
-                // Add a bit of noise to fleeing so they don't get stuck parallel to walls
-                awayDir.x += (Math.random()-0.5)*0.5;
-                if(this.onGround && Math.random() < 0.2) this.velocity.y = this.isDeer ? 8.5 : 6.5; // Random jump while fleeing
-                
-                this.targetDir.copy(awayDir).normalize();
-                this.wanderTimer = 0.8;
-                this.isMoving = true;
-                this.restTimer = 0;
-            } else {
-                // Alternate between moving and resting
-                if(this.isMoving) {
-                    // Switch to rest
-                    this.isMoving = false;
-                    this.restTimer = 3.0 + Math.random() * 5.0; // Stand still longer
-                    this.wanderTimer = this.restTimer;
+        // ---- Bird AI ----
+        if (this.isBird) {
+            if (this.birdState === 'sitting') {
+                if (dist < 6) { // Flee from player
+                    this.birdState = 'flying';
+                    this.velocity.y = 10;
                 } else {
-                    // Start moving in new direction
-                    this.targetDir.set(Math.random()-0.5, 0, Math.random()-0.5).normalize();
-                    this.isMoving = true;
-                    this.wanderTimer = 1.0 + Math.random() * 2.5; // Walk shorter durations
+                    this.wanderTimer -= delta;
+                    if (this.wanderTimer < 0) {
+                        if (Math.random() < 0.1) this.birdState = 'flying'; // Take off randomly
+                        this.wanderTimer = 2 + Math.random() * 5;
+                    }
+                }
+            } else if (this.birdState === 'flying') {
+                this.wanderTimer -= delta;
+                if (this.wanderTimer < 0) {
+                    if (Math.random() < 0.3) {
+                        this.birdState = 'landing';
+                        // find landing spot below
+                        this.targetDir.set(Math.random()-0.5, 0, Math.random()-0.5).normalize();
+                    } else {
+                        this.targetDir.set(Math.random()-0.5, 0, Math.random()-0.5).normalize();
+                        this.wanderTimer = 3 + Math.random() * 5;
+                    }
                 }
             }
+        } else {
+            // ---- Wander / flee AI (Standard Mobs) ----
+            this.wanderTimer -= delta;
+            if(this.wanderTimer <= 0) {
+                let fleeing = (this.isDeer && dist < 10) || (!this.isDeer && dist < 5);
+                if(fleeing) {
+                    // Run away from player, but more smoothly
+                    let awayDir = new THREE.Vector3().subVectors(this.group.position, playerPos).normalize();
+                    
+                    // Add a bit of noise to fleeing so they don't get stuck parallel to walls
+                    awayDir.x += (Math.random()-0.5)*0.5;
+                    if(this.onGround && Math.random() < 0.2) this.velocity.y = this.isDeer ? 8.5 : 6.5; // Random jump while fleeing
+                    
+                    this.targetDir.copy(awayDir).normalize();
+                    this.wanderTimer = 0.8;
+                    this.isMoving = true;
+                    this.restTimer = 0;
+                } else {
+                    // Alternate between moving and resting
+                    if(this.isMoving) {
+                        // Switch to rest
+                        this.isMoving = false;
+                        this.restTimer = 3.0 + Math.random() * 5.0; // Stand still longer
+                        this.wanderTimer = this.restTimer;
+                    } else {
+                        // Start moving in new direction
+                        this.targetDir.set(Math.random()-0.5, 0, Math.random()-0.5).normalize();
+                        this.isMoving = true;
+                        this.wanderTimer = 1.0 + Math.random() * 2.5; // Walk shorter durations
+                    }
+                }
 
-            // Deer occasionally jumps fences / obstacles
-            if(this.isDeer && this.isMoving && this.velocity.y === 0) {
-                if(Math.random() < 0.15) this.velocity.y = 8;
+                // Deer occasionally jumps fences / obstacles
+                if(this.isDeer && this.isMoving && this.velocity.y === 0) {
+                    if(Math.random() < 0.15) this.velocity.y = 8;
+                }
             }
         }
 
@@ -292,7 +415,57 @@ export class Mob {
         }
 
         // Apply horizontal movement
-        if(this.isMoving) {
+        if(this.isBird) {
+            let flySpeed = this.group.userData.birdType === 'sparrow' ? 6 : 4;
+            if (this.birdState === 'sitting') {
+                // Ground movement for birds
+                if (this.isMoving) {
+                    let walkSpeed = this.group.userData.birdType === 'sparrow' ? 2.0 : 1.5;
+                    this.velocity.x = this.targetDir.x * walkSpeed;
+                    this.velocity.z = this.targetDir.z * walkSpeed;
+
+                    // Sparrows hop on ground
+                    if (this.group.userData.birdType === 'sparrow') {
+                        this.hopTimer -= delta;
+                        if (this.onGround && this.hopTimer <= 0) {
+                            this.velocity.y = 4.0;
+                            this.hopTimer = 0.3 + Math.random() * 0.3;
+                        }
+                    }
+                } else {
+                    this.velocity.x *= 0.8;
+                    this.velocity.z *= 0.8;
+                }
+            } else {
+                // Flying evasion logic: check if blocked ahead
+                let lookAheadX = this.group.position.x + this.targetDir.x * 2.5;
+                let lookAheadZ = this.group.position.z + this.targetDir.z * 2.5;
+                let isBlockedAhead = this.isBlocked(lookAheadX, this.group.position.y, lookAheadZ);
+                
+                if (isBlockedAhead) {
+                    // Try to fly UP or turn around
+                    if (Math.random() < 0.6) {
+                        this.velocity.y += 10 * delta; // Fly up
+                    } else {
+                        // Sharp turn
+                        this.targetDir.set(Math.random()-0.5, 0, Math.random()-0.5).normalize();
+                    }
+                }
+
+                this.velocity.x = this.targetDir.x * flySpeed;
+                this.velocity.z = this.targetDir.z * flySpeed;
+                
+                // Water avoidance: if in water, fly up immediately
+                if (inWater) {
+                    this.velocity.y = 12;
+                    this.birdState = 'flying';
+                }
+
+                // Face flight direction
+                let angle = Math.atan2(this.velocity.x, this.velocity.z);
+                this.group.rotation.y = angle;
+            }
+        } else if(this.isMoving) {
             this.velocity.x = this.targetDir.x * speed;
             this.velocity.z = this.targetDir.z * speed;
         } else {
@@ -342,7 +515,10 @@ export class Mob {
                 }
             }
             if (hitCeiling) {
-                this.velocity.y = 0;
+                this.velocity.y = this.isBird ? -2.0 : 0; // Birds bounce off or start descending
+                if (this.isBird) {
+                    this.targetDir.set(Math.random()-0.5, 0, Math.random()-0.5).normalize();
+                }
                 ny = pos.y; // Abort upward movement
             }
         }
@@ -382,6 +558,13 @@ export class Mob {
             this.velocity.y = 0;
             ny = groundYHit + 1 + halfH;
             this.onGround = true;
+            if (this.isBird && this.birdState === 'landing') {
+                this.birdState = 'sitting';
+                this.wanderTimer = 5 + Math.random() * 10;
+            }
+        } else if (this.isBird && this.birdState === 'sitting') {
+            // If ground disappeared
+            this.birdState = 'flying';
         }
 
         if(hitWall && this.onGround) {
@@ -404,7 +587,37 @@ export class Mob {
         // ---- Smooth animations ----
         let legs = this.group.userData.legs;
         
-        if (this.isDeer) {
+        if (this.isBird) {
+            let wings = this.group.userData.wings;
+            let birdType = this.group.userData.birdType;
+
+            if (wings && this.birdState !== 'sitting') {
+                let flapSpeed = birdType === 'sparrow' ? 25 : 12;
+                let flapAngle = Math.sin(performance.now() * 0.001 * flapSpeed) * 1.2;
+                wings.l.rotation.z = flapAngle;
+                wings.r.rotation.z = -flapAngle;
+            } else if (wings) {
+                // Wings tucked while sitting
+                wings.l.rotation.z = 0.2;
+                wings.r.rotation.z = -0.2;
+            }
+
+            // Leg animation for bird walking/hopping
+            if (legs && this.birdState === 'sitting' && this.isMoving) {
+                this.legPhase += delta * 10;
+                let swing = Math.sin(this.legPhase) * 0.5;
+                if (birdType === 'sparrow') {
+                    // Sync legs for hopping
+                    legs.l.rotation.x = legs.r.rotation.x = Math.max(0, swing);
+                } else {
+                    legs.l.rotation.x = swing;
+                    legs.r.rotation.x = -swing;
+                }
+            } else if (legs) {
+                legs.l.rotation.x = 0;
+                legs.r.rotation.x = 0;
+            }
+        } else if (this.isDeer) {
             if(this.isMoving) this.legPhase += delta * 8;
             if(legs) {
                 // Deer stride

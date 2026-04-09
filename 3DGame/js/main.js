@@ -447,6 +447,7 @@ function init() {
     for (let cx = -2; cx <= 2; cx++) {
         for (let cz = -2; cz <= 2; cz++) {
             chunks[`${cx},${cz}`] = new Chunk(cx, cz, scene, materials);
+            spawnOneMobInChunk(cx, cz);
         }
     }
 
@@ -518,11 +519,14 @@ function init() {
         } else if (c === '/night') {
             gameTime = Math.PI * 1.5;
             addChatMessage("Time set to Night");
+        } else if (c === '/sunrise') {
+            gameTime = 0;
+            addChatMessage("Time set to Sunrise");
+        } else if (c === '/sunset') {
+            gameTime = Math.PI;
+            addChatMessage("Time set to Sunset");
         } else if (c === '/help') {
-            addChatMessage("Available commands:");
-            addChatMessage("/day - Set time to day");
-            addChatMessage("/night - Set time to night");
-            addChatMessage("/help - Show this list");
+            addChatMessage("Commands: /day, /night, /sunrise, /sunset, /help");
         } else if (c.startsWith('/')) {
             addChatMessage("Unknown command. Type /help for list.");
         }
@@ -900,21 +904,43 @@ function getSurfaceY(wx, wz) {
 
 // Spawn mobs at valid surface positions (not floating in air, not underground)
 function spawnMobsOnSurface(scene) {
-    const mobConfigs = [
-        { count: 4, isDeer: false },
-        { count: 2, isDeer: true },
-    ];
-    for (let cfg of mobConfigs) {
-        for (let i = 0; i < cfg.count; i++) {
-            // Pick a random spot within loaded world, away from origin
-            let angle = Math.random() * Math.PI * 2;
-            let dist  = 20 + Math.random() * 60;
-            let wx = Math.floor(Math.cos(angle) * dist);
-            let wz = Math.floor(Math.sin(angle) * dist);
-            let wy = getSurfaceY(wx, wz);
-            let mob = new Mob(scene, getBlockGlobal, cfg.isDeer);
-            // Place slightly above surface so gravity settles them gently
-            mob.group.position.set(wx + 0.5, wy + 0.5, wz + 0.5);
+    // This is now replaced by chunk-based spawning, but kept for init if needed
+}
+
+function spawnOneMobInChunk(cx, cz) {
+    // Chance to spawn a mob in this new chunk (25%)
+    if (Math.random() > 0.25) return;
+
+    // Pick a random block within chunk
+    let x = Math.floor(Math.random() * 16);
+    let z = Math.floor(Math.random() * 16);
+    let wx = cx * 16 + x;
+    let wz = cz * 16 + z;
+
+    let wy = getSurfaceY(wx, wz);
+    // Weighted random pool: focus on Deer and Crows
+    const pool = ['rabbit', 'deer', 'deer', 'deer', 'crow', 'crow', 'sparrow', 'sparrow', 'cormorant'];
+    let type = pool[Math.floor(Math.random() * pool.length)];
+    
+    let mob = new Mob(scene, getBlockGlobal, type);
+    
+    if (mob.isBird) {
+        mob.group.position.set(wx + 0.5, 95 + Math.random() * 20, wz + 0.5);
+    } else {
+        // Place slightly HIGHER for large mobs like deer to avoid ground clipping
+        let offset = type === 'deer' ? 0.8 : 0.5;
+        mob.group.position.set(wx + 0.5, wy + offset, wz + 0.5);
+    }
+}
+
+function updateDynamicSpawning() {
+    // ONLY check for despawn of distant mobs
+    for (let i = mobsList.length - 1; i >= 0; i--) {
+        let mob = mobsList[i];
+        let d = mob.group.position.distanceTo(camera.position);
+        if (d > 140) {
+            scene.remove(mob.group);
+            mobsList.splice(i, 1);
         }
     }
 }
@@ -1039,6 +1065,7 @@ function updateDynamicChunks() {
         let job = chunkQueue.shift();
         if (!chunks[`${job.cx},${job.cz}`]) {
             chunks[`${job.cx},${job.cz}`] = new Chunk(job.cx, job.cz, scene, materials);
+            spawnOneMobInChunk(job.cx, job.cz);
         }
     }
 }
@@ -1092,6 +1119,12 @@ function animate() {
             tilt                           // Fixed tilt
         );
         
+        // Atmospheric Sun Color (lerp between yellow and orange-red)
+        const baseSunColor = new THREE.Color(0xffeb3b);
+        const sunsetSunColor = new THREE.Color(0xff8a65);
+        let colorFac = Math.pow(1.0 - Math.abs(dayNess), 3); // More red near horizon
+        sunMesh.material.color.copy(baseSunColor).lerp(sunsetSunColor, colorFac);
+        
         sunMesh.position.copy(dirLight.position).add(camera.position);
         moonMesh.position.set(-dirLight.position.x, -dirLight.position.y, -dirLight.position.z).add(camera.position);
         starsMesh.position.copy(camera.position);
@@ -1109,36 +1142,10 @@ function animate() {
         }
         wasDay = (dayNess > 0);
 
-        // Save time periodically (every 5 seconds)
-        if (Math.floor(time / 5000) !== Math.floor(prevTime / 5000)) {
+        // Save time and spawn mobs periodically (every 2 seconds for more life)
+        if (Math.floor(time / 2000) !== Math.floor(prevTime / 2000)) {
             localStorage.setItem('sandbox3d_gameTime', gameTime);
-        }
-
-        // Sun Glare Effect
-        const glareOverlay = document.getElementById('sun-glare');
-        if (dayNess > 0) {
-            const sunPos = sunMesh.position.clone().sub(camera.position).normalize();
-            const camDir = new THREE.Vector3();
-            camera.getWorldDirection(camDir);
-            const lookDot = camDir.dot(sunPos);
-
-            if (lookDot > 0.95) {
-                // Check occlusion
-                const sunRay = new THREE.Raycaster(camera.position, sunPos, 0, 400);
-                const blocksOnly = scene.children.filter(o => !o.userData.ignoreRaycast);
-                const hits = sunRay.intersectObjects(blocksOnly);
-                
-                if (hits.length === 0) {
-                    const power = (lookDot - 0.95) / 0.05; // 0..1
-                    glareOverlay.style.opacity = power * 0.45;
-                } else {
-                    glareOverlay.style.opacity = 0;
-                }
-            } else {
-                glareOverlay.style.opacity = 0;
-            }
-        } else {
-            glareOverlay.style.opacity = 0;
+            updateDynamicSpawning();
         }
 
         // Dynamically adjust ambient audio volume
@@ -1330,7 +1337,10 @@ function animate() {
             let mob = mobsList[idx];
             try {
                 mob.update(delta, camera.position);
-                if (idx < 5) dumpStr += `(${mob.isDeer?'D':'R'}:${mob.group.position.y.toFixed(1)}) `;
+                if (idx < 5) {
+                    let typeChar = mob.isBird ? 'B' : (mob.isDeer ? 'D' : 'R');
+                    dumpStr += `(${typeChar}:${mob.group.position.y.toFixed(1)}) `;
+                }
             } catch(e) {
                 console.error("Mob update error:", e);
                 dumpStr += "[ERR] ";
@@ -1375,6 +1385,9 @@ document.addEventListener('DOMContentLoaded', () => {
         
         window.modifiedBlocks = {};
         localStorage.setItem('sandbox3d_mods', JSON.stringify({}));
+        
+        localStorage.removeItem('sandbox3d_gameTime'); // Reset time
+        gameTime = Math.PI / 4; // Start at morning
         
         window.chests = {};
         localStorage.setItem('sandbox3d_chests', JSON.stringify({}));
