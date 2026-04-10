@@ -181,3 +181,25 @@ body {
     background: rgba(255, 255, 255, 0.2);
     border-color: #fff;
 }
+
+/* Highlight first 9 slots as hotbar when inside chest/inventory */
+.hotbar-slot-inner {
+    border-color: #88a !important;
+    background: rgba(100, 100, 160, 0.3);
+}
+
+#chest-ui {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 340px;
+    max-height: 82vh;
+    overflow-y: auto;
+    background: rgba(30, 20, 10, 0.95);
+    border: 2px solid #532;
+    padding: 20px;
+    border-radius: 8px;
+    pointer-events: auto;
+    color: white;
+}

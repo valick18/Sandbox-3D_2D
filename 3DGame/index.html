@@ -27,7 +27,7 @@
             <p>Click screen to play (Generates World)</p>
             <p>WASD to move, Space to jump</p>
             <p>Left Click: Break | Right Click: Place</p>
-            <p>Press E to Craft</p>
+            <p>Press E to Craft | Press I to open Inventory</p>
             <p id="menu-warning" style="color: yellow; display: none;">Generating, please wait...</p>
         </div>
         <div id="debug-text" style="position:absolute; top:10px; left:10px; color:white; font-family:monospace; pointer-events:none; z-index:99999; text-shadow:1px 1px 0 #000; font-size:16px;"></div>
@@ -41,7 +41,43 @@
             <h2>Chest</h2>
             <div id="chest-grid"></div>
             <h2>Inventory</h2>
-            <div id="player-grid"></div>
+            <div style="font-size:11px; color:#aaa; margin-bottom:3px;">Hotbar (1–9)</div>
+            <div id="player-grid" style="display:flex; flex-wrap:wrap; gap:4px;"></div>
+        </div>
+        <div id="furnace-ui" style="display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:320px; background:rgba(40,40,40,0.95); border:2px solid #555; padding:20px; border-radius:8px; pointer-events:auto; color:white;">
+            <h2>Furnace</h2>
+            <div style="display:flex; justify-content:space-between; margin-bottom:15px; align-items:center;">
+                <div>
+                    <div style="font-size:12px; margin-bottom:2px;">Input</div>
+                    <div id="furnace-input" class="chest-slot"></div>
+                </div>
+                <div style="text-align:center;">
+                    <div id="furnace-progress" style="width:80px; height:8px; background:#222; border:1px solid #000; border-radius:4px; margin:5px auto; overflow:hidden;">
+                        <div id="furnace-bar" style="width:0%; height:100%; background:orange;"></div>
+                    </div>
+                    <div style="font-size:12px; margin-bottom:2px;">Fuel</div>
+                    <div id="furnace-fuel" class="chest-slot" style="margin:0 auto;"></div>
+                </div>
+                <div>
+                    <div style="font-size:12px; margin-bottom:2px;">Output</div>
+                    <div id="furnace-output" class="chest-slot"></div>
+                </div>
+            </div>
+            <h2>Inventory</h2>
+            <div id="player-furnace-grid" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:15px;"></div>
+        </div>
+        <div id="full-inventory-ui" style="display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:400px; max-height:80vh; overflow-y:auto; background:rgba(25,25,35,0.97); border:2px solid #446; padding:20px; border-radius:10px; pointer-events:auto; color:white; z-index:1000;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #446; padding-bottom:10px;">
+                <h2 style="margin:0; font-size:18px;">🎒 Inventory</h2>
+                <div style="text-align:center;">
+                    <div style="font-size:11px; color:#aaa; margin-bottom:3px;">🗑 Trash</div>
+                    <div id="inventory-trash-slot" class="chest-slot" style="border-color:#a33; border-width:2px; width:44px; height:44px;"></div>
+                </div>
+            </div>
+            <div style="font-size:11px; color:#aaa; margin-bottom:5px;">Hotbar (slots 1–9)</div>
+            <div id="full-inventory-hotbar" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #334;"></div>
+            <div style="font-size:11px; color:#aaa; margin-bottom:5px;">Backpack (slots 10–36)</div>
+            <div id="full-inventory-backpack" style="display:flex; flex-wrap:wrap; gap:4px;"></div>
         </div>
         
         <div id="chat-container" style="display:none; position:absolute; bottom:100px; left:20px; width:400px; pointer-events:auto;">

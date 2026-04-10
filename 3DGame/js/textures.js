@@ -17,7 +17,12 @@ export const BLOCKS = {
     FLOWER_RED: 13,
     FLOWER_YELLOW: 14,
     TALL_GRASS: 15,
-    SNOW_LAYER: 16
+    BRICK: 16,
+    STONE_BRICK: 17,
+    CLAY: 18,
+    GLASS: 19,
+    FURNACE: 20,
+    SNOW_LAYER: 21
 };
 
 // Colors for each block
@@ -33,7 +38,12 @@ const BASE_COLORS = {
     [BLOCKS.WORKBENCH]: [160, 110, 60], // lighter wood
     [BLOCKS.CHEST]: [140, 90, 40], // medium wood
     [BLOCKS.WATER]: [40, 80, 220],
-    [BLOCKS.CACTUS]: [30, 130, 40]
+    [BLOCKS.CACTUS]: [30, 130, 40],
+    [BLOCKS.BRICK]: [180, 80, 70],
+    [BLOCKS.STONE_BRICK]: [115, 115, 115],
+    [BLOCKS.CLAY]: [160, 160, 170],
+    [BLOCKS.GLASS]: [200, 240, 255],
+    [BLOCKS.FURNACE]: [80, 80, 80]
 };
 
 const size = 64; // HD Textures
@@ -352,4 +362,92 @@ const createFloraTex = (blockId, type) => {
 materials[BLOCKS.FLOWER_RED] = createFloraTex(BLOCKS.FLOWER_RED, 'flower');
 materials[BLOCKS.FLOWER_YELLOW] = createFloraTex(BLOCKS.FLOWER_YELLOW, 'flower');
 materials[BLOCKS.TALL_GRASS] = createFloraTex(BLOCKS.TALL_GRASS, 'grass');
+
+    // Brick
+    materials[BLOCKS.BRICK] = createCanvasTex(BLOCKS.BRICK, (x, y) => {
+        let vary = (Math.random() - 0.5) * 15;
+        let c = BASE_COLORS[BLOCKS.BRICK];
+        let row = Math.floor(y / 16);
+        let offset = (row % 2 === 0) ? 0 : 16;
+        let bx = (x + offset) % 32;
+        if (y % 16 < 2 || bx < 2) return [200 + vary, 200 + vary, 200 + vary];
+        return [c[0] + vary, c[1] + vary, c[2] + vary];
+    });
+
+    // Stone Brick
+    materials[BLOCKS.STONE_BRICK] = createCanvasTex(BLOCKS.STONE_BRICK, (x, y) => {
+        let vary = (Math.random() - 0.5) * 10;
+        let c = BASE_COLORS[BLOCKS.STONE_BRICK];
+        let row = Math.floor(y / 32);
+        let offset = (row % 2 === 0) ? 0 : 32;
+        let bx = (x + offset) % 64;
+        if (y % 32 < 2 || bx < 2) return [60 + vary, 60 + vary, 60 + vary];
+        if (y % 32 < 4 || bx < 4) vary += 15;
+        if (y % 32 > 28 || bx > 60) vary -= 15;
+        return [c[0] + vary, c[1] + vary, c[2] + vary];
+    });
+
+    // Clay
+    materials[BLOCKS.CLAY] = createCanvasTex(BLOCKS.CLAY, (x, y) => {
+        let vary = (Math.random() - 0.5) * 6;
+        let swirl = Math.sin((x/64)*Math.PI*2 + (y/64)*Math.PI*2) * 5;
+        let c = BASE_COLORS[BLOCKS.CLAY];
+        return [c[0] + swirl + vary, c[1] + swirl + vary, c[2] + swirl + vary];
+    });
+
+    // Glass
+    let glassMat = createCanvasTex(BLOCKS.GLASS, (x, y) => {
+        let c = BASE_COLORS[BLOCKS.GLASS];
+        if (x < 3 || x > 60 || y < 3 || y > 60) return [c[0], c[1], c[2], 255];
+        return [c[0], c[1], c[2], 50]; 
+    });
+    glassMat.transparent = true;
+    glassMat.depthWrite = false; // Allows multiple glass blocks to stack translucently
+    materials[BLOCKS.GLASS] = glassMat;
+
+    // Furnace - stone body
+    materials[BLOCKS.FURNACE] = createCanvasTex(BLOCKS.FURNACE, (x, y) => {
+        // Clean chiseled stone look
+        let c = BASE_COLORS[BLOCKS.FURNACE];
+        // Brick-like stone pattern
+        let bx = x % 32;
+        let by = y % 16;
+        let mortar = (bx < 2 || by < 2) ? -30 : 0;
+        // Stone variation
+        let vary = Math.sin(x * 0.3 + y * 0.7) * 8 + Math.cos(x * 0.7 - y * 0.3) * 6;
+        return [c[0] + mortar + vary, c[1] + mortar + vary, c[2] + mortar + vary];
+    });
+
+    // Furnace - front face (fire opening)
+    materials[101] = createCanvasTex(101, (x, y) => {
+        // Frame
+        let c = BASE_COLORS[BLOCKS.FURNACE];
+        let bx = x % 32;
+        let by = y % 16;
+        let mortar = (bx < 2 || by < 2) ? -30 : 0;
+        let vary = Math.sin(x * 0.3 + y * 0.7) * 8 + Math.cos(x * 0.7 - y * 0.3) * 6;
+
+        // Fire opening in center of face
+        if (x >= 14 && x <= 50 && y >= 16 && y <= 50) {
+            // Interior opening - dark with ember glow
+            if (x >= 18 && x <= 46 && y >= 20 && y <= 46) {
+                // Glowing embers at bottom
+                if (y > 38) {
+                    let glow = Math.abs(Math.sin(x * 0.3)) * 40 + Math.cos(y * 0.5) * 20;
+                    return [180 + glow, 60 + glow * 0.4, 10, 255];
+                }
+                // Flames in middle
+                let flame = Math.abs(Math.sin(x * 0.35 + 1.0)) * 50;
+                if (y > 26) return [200 + flame, 100 + flame * 0.5, 20, 255];
+                // Dark at top
+                return [30, 20, 15, 255];
+            }
+            // Iron frame around opening
+            return [45, 45, 50, 255];
+        }
+        return [c[0] + mortar + vary, c[1] + mortar + vary, c[2] + mortar + vary];
+    });
+    // Use front-face texture as the hotbar/inventory icon for furnace
+    icons[BLOCKS.FURNACE] = icons[101];
+
 }

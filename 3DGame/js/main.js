@@ -29,11 +29,11 @@ let craftingMode = 'none'; // 'none', 'basic', 'workbench', 'chest'
 let isChatOpen = false;
 
 // ----------------- INVENTORY & CRAFTING -----------------
-const BLOCK_NAMES = {1:'Grass', 2:'Dirt', 3:'Stone', 4:'Wood', 5:'Leaves', 6:'Sand', 7:'Planks', 8:'Meat', 9:'Workbench', 10:'Chest'};
+const BLOCK_NAMES = {1:'Grass', 2:'Dirt', 3:'Stone', 4:'Wood', 5:'Leaves', 6:'Sand', 7:'Planks', 8:'Meat', 9:'Workbench', 10:'Chest', 11:'Water', 12:'Cactus', 13:'Red Flower', 14:'Yellow Flower', 15:'Tall Grass', 16:'Brick', 17:'Stone Brick', 18:'Clay', 19:'Glass', 20:'Furnace'};
 
 class Inventory {
     constructor() {
-        this.slots = Array(9).fill(null);
+        this.slots = Array(36).fill(null); // 9 hotbar + 27 backpack
         this.activeSlot = 0;
         // Starter items
         this.slots[0] = { id: BLOCKS.WOOD, count: 10 };
@@ -51,6 +51,14 @@ class Inventory {
         if (emptyIdx !== -1) {
             this.slots[emptyIdx] = { id: id, count: amount };
         }
+    }
+
+    canAcceptItem(id) {
+        // Returns true if there is a stackable slot or an empty slot
+        let existing = this.slots.find(s => s && s.id === id && s.count < 64);
+        if (existing) return true;
+        let emptyIdx = this.slots.findIndex(s => s === null);
+        return emptyIdx !== -1;
     }
 
     useActiveItem() {
@@ -101,6 +109,70 @@ function updateInventoryUI() {
         hotbar.appendChild(div);
     }
     localStorage.setItem('sandbox3d_inventory', JSON.stringify(inventory.slots));
+}
+
+function updateFullInventoryUI() {
+    const hotbarDiv = document.getElementById('full-inventory-hotbar');
+    const backpackDiv = document.getElementById('full-inventory-backpack');
+    const trashSlot = document.getElementById('inventory-trash-slot');
+    if (!hotbarDiv || !backpackDiv) return;
+
+    const makeSlot = (i) => {
+        let div = document.createElement('div');
+        div.className = 'chest-slot';
+        let slot = inventory.slots[i];
+        if (slot) {
+            let img = document.createElement('img');
+            img.src = icons[slot.id];
+            img.className = 'block-icon';
+            div.appendChild(img);
+            if (slot.count > 1) {
+                let cnt = document.createElement('span');
+                cnt.className = 'hotbar-count';
+                cnt.textContent = slot.count;
+                div.appendChild(cnt);
+            }
+            div.title = BLOCK_NAMES[slot.id] || '?';
+            div.draggable = true;
+            div.ondragstart = (e) => {
+                e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'fullinv', index: i }));
+            };
+        }
+        div.ondragover = (e) => e.preventDefault();
+        div.ondrop = (e) => {
+            e.preventDefault();
+            let raw = e.dataTransfer.getData('text/plain');
+            if (!raw) return;
+            let data = JSON.parse(raw);
+            if (data.source === 'fullinv') {
+                dragDropItem(inventory.slots, data.index, inventory.slots, i);
+                updateInventoryUI();
+                updateFullInventoryUI();
+            }
+        };
+        return div;
+    };
+
+    hotbarDiv.innerHTML = '';
+    for (let i = 0; i < 9; i++) hotbarDiv.appendChild(makeSlot(i));
+    backpackDiv.innerHTML = '';
+    for (let i = 9; i < 36; i++) backpackDiv.appendChild(makeSlot(i));
+
+    // Trash slot setup
+    trashSlot.innerHTML = '🗑';
+    trashSlot.ondragover = (e) => e.preventDefault();
+    trashSlot.ondrop = (e) => {
+        e.preventDefault();
+        let raw = e.dataTransfer.getData('text/plain');
+        if (!raw) return;
+        let data = JSON.parse(raw);
+        if (data.source === 'fullinv' && inventory.slots[data.index]) {
+            inventory.slots[data.index] = null;
+            updateInventoryUI();
+            updateFullInventoryUI();
+            playSound(130, 0.08);
+        }
+    };
 }
 
 // --- WEATHER & SEASONS ---
@@ -347,9 +419,12 @@ function updateCraftingUI() {
     // Helper to add recipes
     const addRecipe = (outId, outCount, reqId, reqCount) => {
         let btn = document.createElement('button');
-        btn.innerHTML = `<span>Craft ${outCount}x <img src="${icons[outId]}" class="block-icon"></span> <span>Req: ${reqCount}x <img src="${icons[reqId]}" class="block-icon"></span>`;
-        btn.disabled = inventory.countItem(reqId) < reqCount;
+        let hasIngredients = inventory.countItem(reqId) >= reqCount;
+        let hasSpace = inventory.canAcceptItem(outId);
+        btn.innerHTML = `<span>${!hasSpace ? '<span style="color:#f55;font-size:11px;">[Inv Full] </span>' : ''}Craft ${outCount}x <img src="${icons[outId]}" class="block-icon"></span> <span>Req: ${reqCount}x <img src="${icons[reqId]}" class="block-icon"></span>`;
+        btn.disabled = !hasIngredients || !hasSpace;
         btn.onclick = () => {
+            if(!inventory.canAcceptItem(outId)) return;
             if(inventory.removeItem(reqId, reqCount)) {
                 inventory.addItem(outId, outCount);
                 updateInventoryUI();
@@ -372,6 +447,9 @@ function updateCraftingUI() {
         list.appendChild(hdr);
         
         addRecipe(BLOCKS.CHEST, 1, BLOCKS.PLANKS, 8);
+        addRecipe(BLOCKS.FURNACE, 1, BLOCKS.STONE, 8); // Stone furnace
+        addRecipe(BLOCKS.BRICK, 4, BLOCKS.CLAY, 4); // Baked clay -> bricks
+        addRecipe(BLOCKS.STONE_BRICK, 4, BLOCKS.STONE, 4); // Carved stone
     }
 }
 
@@ -382,6 +460,189 @@ let currentChestKey = null;
 function saveChests() {
     localStorage.setItem('sandbox3d_chests', JSON.stringify(window.chests));
 }
+
+// ----------------- FURNACE UI -----------------
+window.furnaces = {};
+let currentFurnaceKey = null;
+let lastFurnaceTickTime = Date.now();
+
+function saveFurnaces() {
+    localStorage.setItem('sandbox3d_furnaces', JSON.stringify({
+        data: window.furnaces,
+        t: Date.now()
+    }));
+}
+
+function updateFurnaceUI() {
+    if (!currentFurnaceKey) return;
+    let f = window.furnaces[currentFurnaceKey];
+    if (!f) return;
+    
+    // helper to build slot div
+    const buildSlot = (slotData, dragDataStr) => {
+        let div = document.createElement('div');
+        div.className = 'chest-slot';
+        if (slotData) {
+            let img = document.createElement('img');
+            img.src = icons[slotData.id];
+            img.className = 'block-icon';
+            div.appendChild(img);
+            if (slotData.count > 1) {
+                let cnt = document.createElement('span');
+                cnt.className = 'hotbar-count';
+                cnt.textContent = slotData.count;
+                div.appendChild(cnt);
+            }
+            div.title = BLOCK_NAMES[slotData.id] || '?';
+            div.draggable = true;
+            div.ondragstart = (e) => {
+                e.dataTransfer.setData('text/plain', dragDataStr);
+            };
+        }
+        div.ondragover = (e) => e.preventDefault();
+        return div;
+    };
+
+    // Update Input
+    let inDiv = buildSlot(f.input, JSON.stringify({source:'furnace_input'}));
+    inDiv.ondrop = (e) => { e.preventDefault(); handleFurnaceDrop(e.dataTransfer.getData('text/plain'), 'input'); };
+    let cIn = document.getElementById('furnace-input'); cIn.innerHTML = ''; cIn.appendChild(inDiv);
+
+    // Update Fuel
+    let fuelDiv = buildSlot(f.fuel, JSON.stringify({source:'furnace_fuel'}));
+    fuelDiv.ondrop = (e) => { e.preventDefault(); handleFurnaceDrop(e.dataTransfer.getData('text/plain'), 'fuel'); };
+    let cFuel = document.getElementById('furnace-fuel'); cFuel.innerHTML = ''; cFuel.appendChild(fuelDiv);
+
+    // Update Output (only withdrawable)
+    let outDiv = buildSlot(f.output, JSON.stringify({source:'furnace_output'}));
+    let cOut = document.getElementById('furnace-output'); cOut.innerHTML = ''; cOut.appendChild(outDiv);
+
+    // Update Progress bar
+    let pBar = document.getElementById('furnace-bar');
+    pBar.style.width = (f.smeltProgress / 5.0 * 100) + '%';
+    
+    // Update player inventory inside furnace UI
+    const pGrid = document.getElementById('player-furnace-grid');
+    pGrid.innerHTML = '';
+    for (let i = 0; i < inventory.slots.length; i++) {
+        let div = document.createElement('div');
+        div.className = 'player-slot';
+        let slot = inventory.slots[i];
+        if (slot) {
+            let img = document.createElement('img');
+            img.src = icons[slot.id];
+            img.className = 'block-icon';
+            div.appendChild(img);
+            if (slot.count > 1) {
+                let cnt = document.createElement('span');
+                cnt.className = 'hotbar-count';
+                cnt.textContent = slot.count;
+                div.appendChild(cnt);
+            }
+            div.title = BLOCK_NAMES[slot.id];
+            div.draggable = true;
+            div.ondragstart = (e) => {
+                e.dataTransfer.setData('text/plain', JSON.stringify({source: 'inv_furnace', index: i}));
+            };
+        }
+        div.ondragover = (e) => e.preventDefault();
+        div.ondrop = (e) => {
+            e.preventDefault();
+            let dataRaw = e.dataTransfer.getData('text/plain');
+            if(!dataRaw) return;
+            let data = JSON.parse(dataRaw);
+            
+            if (data.source === 'furnace_output') {
+                if (!slot || slot.id === f.output.id) sendFurnaceItemToInv('output', i);
+            } else if (data.source === 'furnace_input') {
+                if (!slot || slot.id === f.input.id) sendFurnaceItemToInv('input', i);
+            } else if (data.source === 'furnace_fuel') {
+                if (!slot || slot.id === f.fuel.id) sendFurnaceItemToInv('fuel', i);
+            } else if (data.source === 'inv_furnace') {
+                dragDropItem(inventory.slots, data.index, inventory.slots, i);
+                updateFurnaceUI();
+            }
+        };
+        // Right click to send to input/fuel automatically
+        div.oncontextmenu = (e) => {
+            e.preventDefault();
+            if(!slot) return;
+            if(slot.id === BLOCKS.WOOD || slot.id === BLOCKS.PLANKS) {
+                sendInvItemToFurnace(i, 'fuel');
+            } else {
+                sendInvItemToFurnace(i, 'input');
+            }
+        };
+        pGrid.appendChild(div);
+    }
+}
+
+function handleFurnaceDrop(dataRaw, targetSlotName) {
+    if(!dataRaw) return;
+    let data = JSON.parse(dataRaw);
+    let f = window.furnaces[currentFurnaceKey];
+    if (data.source === 'inv_furnace') {
+        let invItem = inventory.slots[data.index];
+        if(!invItem) return;
+        if(f[targetSlotName] && f[targetSlotName].id !== invItem.id) return;
+        
+        if(!f[targetSlotName]) f[targetSlotName] = {id: invItem.id, count: 1};
+        else f[targetSlotName].count++;
+        
+        invItem.count--;
+        if(invItem.count <= 0) inventory.slots[data.index] = null;
+        updateFurnaceUI(); updateInventoryUI(); saveFurnaces();
+    }
+}
+
+function sendFurnaceItemToInv(furnaceSlotName, invIndex) {
+    let f = window.furnaces[currentFurnaceKey];
+    let item = f[furnaceSlotName];
+    if(!item) return;
+    
+    let target = inventory.slots[invIndex];
+    if(!target) {
+        inventory.slots[invIndex] = {id: item.id, count: item.count};
+        f[furnaceSlotName] = null;
+    } else if (target.id === item.id) {
+        let space = 64 - target.count;
+        let transfer = Math.min(space, item.count);
+        target.count += transfer;
+        item.count -= transfer;
+        if(item.count <= 0) f[furnaceSlotName] = null;
+    }
+    updateFurnaceUI(); updateInventoryUI(); saveFurnaces();
+}
+
+function sendInvItemToFurnace(invIndex, furnaceSlotName) {
+    let f = window.furnaces[currentFurnaceKey];
+    let item = inventory.slots[invIndex];
+    if(!item) return;
+    let target = f[furnaceSlotName];
+    if(!target) {
+        f[furnaceSlotName] = {id: item.id, count: 1};
+        item.count--;
+    } else if(target.id === item.id && target.count < 64) {
+        target.count++;
+        item.count--;
+    }
+    if(item.count <= 0) inventory.slots[invIndex] = null;
+    updateFurnaceUI(); updateInventoryUI(); saveFurnaces();
+}
+
+function openFurnace(x, y, z) {
+    let key = `${x},${y},${z}`;
+    if (!window.furnaces) window.furnaces = {};
+    if (!window.furnaces[key]) {
+        window.furnaces[key] = { input: null, fuel: null, output: null, fuelTicksLeft: 0, smeltProgress: 0 };
+    }
+    currentFurnaceKey = key;
+    controls.unlock();
+    document.getElementById('furnace-ui').style.display = 'block';
+    document.getElementById('ui-backdrop').style.display = 'block';
+    updateFurnaceUI();
+}
+
 
 function dragDropItem(fromArray, fromIdx, toArray, toIdx) {
     let fromItem = fromArray[fromIdx];
@@ -484,9 +745,16 @@ function updateChestUI() {
     
     const pGrid = document.getElementById('player-grid');
     pGrid.innerHTML = '';
-    for(let i=0; i<9; i++) {
+    for(let i = 0; i < 36; i++) {
+        // Visual separator between hotbar and backpack
+        if (i === 9) {
+            let sep = document.createElement('div');
+            sep.style.cssText = 'width:100%; font-size:11px; color:#aaa; padding:4px 0 3px; border-top:1px solid #446;';
+            sep.textContent = 'Backpack (10–36)';
+            pGrid.appendChild(sep);
+        }
         let div = document.createElement('div');
-        div.className = 'player-slot';
+        div.className = 'player-slot' + (i < 9 ? ' hotbar-slot-inner' : '');
         let slot = inventory.slots[i];
         if (slot) {
             div.title = BLOCK_NAMES[slot.id];
@@ -931,6 +1199,8 @@ function init() {
                 craftingMode = 'none';
                 craftingMenu.style.display = 'none';
                 document.getElementById('chest-ui').style.display = 'none';
+                document.getElementById('furnace-ui').style.display = 'none';
+                document.getElementById('full-inventory-ui').style.display = 'none';
                 document.getElementById('ui-backdrop').style.display = 'none';
                 instructions.style.display = 'none';
                 document.getElementById('ui').style.pointerEvents = 'none';
@@ -953,6 +1223,10 @@ function init() {
                          craftingMode = 'chest';
                          openChest(targetX, targetY, targetZ);
                          return; // openChest handles unlocking
+                     } else if (targetBlockId === BLOCKS.FURNACE) {
+                         craftingMode = 'furnace';
+                         openFurnace(targetX, targetY, targetZ);
+                         return;
                      } else if (targetBlockId === BLOCKS.WORKBENCH) {
                          craftingMode = 'workbench';
                      }
@@ -960,6 +1234,7 @@ function init() {
                 
                 craftingMenu.style.display = 'block';
                 document.getElementById('chest-ui').style.display = 'none';
+                document.getElementById('furnace-ui').style.display = 'none';
                 instructions.style.display = 'none';
                 document.getElementById('ui').style.pointerEvents = 'auto';
                 
@@ -972,12 +1247,33 @@ function init() {
                 ControlsUnlockWait();
             }
         }
+
+        // Inventory (I key)
+        if (event.code === 'KeyI') {
+            if (!controls.isLocked && craftingMode === 'none' && instructions.style.display === 'flex') return;
+            if (craftingMode === 'inventory') {
+                craftingMode = 'none';
+                document.getElementById('full-inventory-ui').style.display = 'none';
+                document.getElementById('ui-backdrop').style.display = 'none';
+                document.getElementById('ui').style.pointerEvents = 'none';
+                controls.lock();
+            } else if (craftingMode === 'none') {
+                craftingMode = 'inventory';
+                document.getElementById('full-inventory-ui').style.display = 'block';
+                document.getElementById('ui-backdrop').style.display = 'block';
+                document.getElementById('ui').style.pointerEvents = 'auto';
+                updateFullInventoryUI();
+                ControlsUnlockWait();
+            }
+        }
         
         // Handle ESC to close UIs safely
         if (event.code === 'Escape' && craftingMode !== 'none') {
             craftingMode = 'none';
             craftingMenu.style.display = 'none';
             document.getElementById('chest-ui').style.display = 'none';
+            document.getElementById('furnace-ui').style.display = 'none';
+            document.getElementById('full-inventory-ui').style.display = 'none';
             document.getElementById('ui-backdrop').style.display = 'none';
             document.getElementById('ui').style.pointerEvents = 'none';
             instructions.style.display = 'flex'; // show pause menu
@@ -1076,6 +1372,16 @@ function init() {
                              saveChests();
                          }
                     }
+                    if (blockId === BLOCKS.FURNACE) {
+                        if (window.furnaces && window.furnaces[`${targetX},${targetY},${targetZ}`]) {
+                            delete window.furnaces[`${targetX},${targetY},${targetZ}`];
+                            saveFurnaces();
+                        }
+                        if (window.furnaceOrientations && window.furnaceOrientations[`${targetX},${targetY},${targetZ}`]) {
+                            delete window.furnaceOrientations[`${targetX},${targetY},${targetZ}`];
+                            localStorage.setItem('sandbox3d_furnace_orient', JSON.stringify(window.furnaceOrientations));
+                        }
+                    }
                     updateInventoryUI();
                     if (blockId === BLOCKS.LEAVES || blockId === BLOCKS.GRASS) {
                         playLeafSound();
@@ -1137,6 +1443,20 @@ function init() {
                 
                 let placedId = inventory.useActiveItem();
                 if(placedId !== BLOCKS.AIR) {
+                    // Store furnace orientation BEFORE setting block so mesh builder sees it
+                    if (placedId === BLOCKS.FURNACE) {
+                        const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                        fwd.y = 0;
+                        if (Math.abs(fwd.x) > Math.abs(fwd.z)) {
+                            // Dominant X axis: player faces +X or -X
+                            window.furnaceOrientations[`${bx},${by},${bz}`] = fwd.x > 0 ? 1 : 0; 
+                        } else {
+                            // Dominant Z axis: player faces +Z or -Z
+                            window.furnaceOrientations[`${bx},${by},${bz}`] = fwd.z > 0 ? 5 : 4; 
+                        }
+                        localStorage.setItem('sandbox3d_furnace_orient', JSON.stringify(window.furnaceOrientations));
+                    }
+                    
                     setBlockGlobal(bx, by, bz, placedId);
                     updateInventoryUI();
                     playSound(200, 0.1); 
@@ -1260,7 +1580,7 @@ function checkAABB(px, py, pz) {
             for (let z = startZ; z <= endZ; z++) {
                 let blockId = getBlockGlobal(x, y, z);
                 // Ignore AIR, WATER, and all FLORA (Flowers/Grass IDs 13-15)
-                if (blockId !== BLOCKS.AIR && blockId !== BLOCKS.WATER && blockId < 13) return true;
+                if (blockId !== BLOCKS.AIR && blockId !== BLOCKS.WATER && !(blockId >= 13 && blockId <= 15)) return true;
             }
         }
     }
@@ -1374,6 +1694,58 @@ function animate() {
     
     // Process infinite world generation
     updateDynamicChunks();
+
+    // Furnace ticking (Fast-forward if offline)
+    let now = Date.now();
+    if (now - lastFurnaceTickTime >= 1000) {
+        let ticks = Math.floor((now - lastFurnaceTickTime) / 1000);
+        if (ticks > 86400) ticks = 86400; // max 1 day sim
+        lastFurnaceTickTime += ticks * 1000;
+        
+        let changed = false;
+        for (let key in window.furnaces) {
+             let f = window.furnaces[key];
+             for(let i=0; i < ticks; i++) {
+                 let outId = f.input?.id === BLOCKS.SAND ? BLOCKS.GLASS : (f.input?.id === BLOCKS.CLAY ? BLOCKS.BRICK : null);
+                 let validSmelt = outId && (!f.output || (f.output.id === outId && f.output.count < 64));
+                 
+                 if (validSmelt && f.fuelTicksLeft <= 0 && f.fuel && (f.fuel.id === BLOCKS.WOOD || f.fuel.id === BLOCKS.PLANKS)) {
+                     f.fuel.count--;
+                     if (f.fuel.count <= 0) f.fuel = null;
+                     f.fuelTicksLeft = 15; // 15 seconds per fuel
+                     changed = true;
+                 }
+                 
+                 if (validSmelt && f.fuelTicksLeft > 0) {
+                     f.smeltProgress++;
+                     changed = true;
+                     if (f.smeltProgress >= 5) {
+                         f.smeltProgress = 0;
+                         f.input.count--;
+                         if (f.input.count <= 0) f.input = null;
+                         if (!f.output) f.output = {id: outId, count: 1};
+                         else f.output.count++;
+                     }
+                 } else {
+                     if (f.smeltProgress > 0) { f.smeltProgress = 0; changed = true; }
+                 }
+                 
+                 if (f.fuelTicksLeft > 0) {
+                     f.fuelTicksLeft--;
+                     changed = true;
+                     if (f.fuelTicksLeft === 0) f.smeltProgress = 0; 
+                 }
+                 
+                 if (!validSmelt && f.fuelTicksLeft <= 0) break;
+             }
+        }
+        if (changed) { 
+            saveFurnaces(); 
+            if (currentFurnaceKey && document.getElementById('furnace-ui').style.display === 'block') {
+                updateFurnaceUI(); 
+            }
+        }
+    }
 
     // --- WORLD SIMULATION (Continues even if UI is open) ---
     
@@ -1651,6 +2023,7 @@ function animate() {
 }
 
 window.modifiedBlocks = {};
+window.furnaceOrientations = {};
 let currentSeed = 1337;
 let _posSaveTimer = 3.0;
 
@@ -1679,9 +2052,15 @@ document.addEventListener('DOMContentLoaded', () => {
         window.chests = {};
         localStorage.setItem('sandbox3d_chests', JSON.stringify({}));
         
+        window.furnaces = {};
+        window.furnaceOrientations = {};
+        lastFurnaceTickTime = Date.now();
+        saveFurnaces();
+        localStorage.setItem('sandbox3d_furnace_orient', JSON.stringify({}));
+        
         localStorage.removeItem('sandbox3d_pos'); // reset spawn position
         
-        inventory.slots = Array(9).fill(null);
+        inventory.slots = Array(36).fill(null);
         inventory.slots[0] = { id: BLOCKS.WOOD, count: 10 };
         inventory.activeSlot = 0;
         
@@ -1703,6 +2082,23 @@ document.addEventListener('DOMContentLoaded', () => {
             window.chests = JSON.parse(chestData);
         } else {
             window.chests = {};
+        }
+
+        let furnaceDataRaw = localStorage.getItem('sandbox3d_furnaces');
+        if (furnaceDataRaw) {
+            let fdata = JSON.parse(furnaceDataRaw);
+            window.furnaces = fdata.data || {};
+            lastFurnaceTickTime = fdata.t || Date.now();
+        } else {
+            window.furnaces = {};
+            lastFurnaceTickTime = Date.now();
+        }
+
+        let orientData = localStorage.getItem('sandbox3d_furnace_orient');
+        if (orientData) {
+            window.furnaceOrientations = JSON.parse(orientData);
+        } else {
+            window.furnaceOrientations = {};
         }
         
         let savedInv = localStorage.getItem('sandbox3d_inventory');

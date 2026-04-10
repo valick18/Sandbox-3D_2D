@@ -119,11 +119,22 @@ export class Chunk {
                     if (y > surfaceY) {
                         this.data[idx] = y <= WATER_LEVEL ? BLOCKS.WATER : BLOCKS.AIR;
                     } else if (y === surfaceY) {
-                        if (isDesert || (surfaceY <= WATER_LEVEL + 2 && !isMountain)) this.data[idx] = BLOCKS.SAND;
-                        else if (isMountain) this.data[idx] = BLOCKS.STONE;
-                        else this.data[idx] = BLOCKS.GRASS;
+                        if (isDesert || (surfaceY <= WATER_LEVEL + 2 && !isMountain)) {
+                            this.data[idx] = BLOCKS.SAND;
+                        } else if (isMountain) {
+                            this.data[idx] = BLOCKS.STONE;
+                        } else {
+                            this.data[idx] = BLOCKS.GRASS;
+                        }
                     } else if (y > surfaceY - 4) {
-                        this.data[idx] = (isDesert || isOcean) ? BLOCKS.SAND : (isMountain ? BLOCKS.STONE : BLOCKS.DIRT);
+                        let isClay = false;
+                        if (!isDesert && !isOcean && !isMountain) {
+                            let depth = surfaceY - y;
+                            if ((depth === 2 || depth === 3) && Math.random() < 0.4) {
+                                isClay = noise3D(wx * 0.15, y * 0.15, wz * 0.15) > 0.6;
+                            }
+                        }
+                        this.data[idx] = (isDesert || isOcean) ? BLOCKS.SAND : (isMountain ? BLOCKS.STONE : (isClay ? BLOCKS.CLAY : BLOCKS.DIRT));
                     } else {
                         this.data[idx] = BLOCKS.STONE;
                     }
@@ -327,7 +338,8 @@ export class Chunk {
                         else if (nBlock === BLOCKS.LEAVES && blockId !== BLOCKS.LEAVES) shouldRender = true;
                         else if (nBlock === BLOCKS.WATER && blockId !== BLOCKS.WATER) shouldRender = true;
                         else if (nBlock === BLOCKS.CACTUS && blockId !== BLOCKS.CACTUS) shouldRender = true;
-                        else if (nBlock >= 13) shouldRender = true; 
+                        else if (nBlock >= 13 && nBlock <= 15) shouldRender = true; 
+                        else if (nBlock === BLOCKS.GLASS && blockId !== BLOCKS.GLASS) shouldRender = true;
                         
                         if (shouldRender) {
                             
@@ -335,6 +347,15 @@ export class Chunk {
                             let matId = blockId;
                             if (blockId === BLOCKS.GRASS && index !== 2 && index !== 3) matId = 100; // side
                             if (blockId === BLOCKS.GRASS && index === 3) matId = BLOCKS.DIRT; // bottom
+                            // Furnace: front face from stored orientation shows fire opening
+                            if (blockId === BLOCKS.FURNACE) {
+                                let wx = this.chunkX * CHUNK_SIZE + x;
+                                let wy = y;
+                                let wz = this.chunkZ * CHUNK_SIZE + z;
+                                let frontIdx = (window.furnaceOrientations && window.furnaceOrientations[`${wx},${wy},${wz}`]);
+                                if (frontIdx === undefined) frontIdx = 4; // default +Z
+                                if (index === frontIdx) matId = 101;
+                            }
 
                             const uvSeq = [[0,0],[1,0],[1,1],[0,1]];
 
@@ -348,10 +369,62 @@ export class Chunk {
                                     waterFaces.uv.push(uvSeq[cv][0], uvSeq[cv][1]);
                                     cv++;
                                 }
-                                 waterFaces.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
+                                waterFaces.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
                             } else if (blockId === BLOCKS.SNOW_LAYER) {
                                 // 3D Minecraft-style Snow Layer: Thin cuboid (Top + 4 Sides)
                                 if (index === 0) { 
+                                     if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
+                                     let mf = solidFaces[matId];
+                                     const h = 0.125; // 2 pixels high
+                                     
+                                     let startV = mf.pos.length / 3;
+                                     const top = [[0,h,0],[1,h,0],[1,h,1],[0,h,1]];
+                                     for(let p of top) { 
+                                         mf.pos.push(x + p[0], y + p[1], z + p[2]); 
+                                         mf.norm.push(0, 1, 0); 
+                                     }
+                                     mf.uv.push(0,0, 1,0, 1,1, 0,1);
+                                     mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
+
+                                     const sides = [
+                                         [[0,0,1],[1,0,1],[1,h,1],[0,h,1]], // Z+
+                                         [[1,0,0],[0,0,0],[0,h,0],[1,h,0]], // Z-
+                                         [[1,0,1],[1,0,0],[1,h,0],[1,h,1]], // X+
+                                         [[0,0,0],[0,0,1],[0,h,1],[0,h,0]]  // X-
+                                     ];
+                                     const norms = [[0,0,1],[0,0,-1],[1,0,0],[-1,0,0]];
+                                     for(let si=0; si<4; si++) {
+                                         startV = mf.pos.length / 3;
+                                         for(let p of sides[si]) {
+                                             mf.pos.push(x + p[0], y + p[1], z + p[2]);
+                                             mf.norm.push(norms[si][0], norms[si][1], norms[si][2]);
+                                         }
+                                         mf.uv.push(0,1, 1,1, 1,0, 0,0); 
+                                         mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
+                                     }
+                                }
+                            } else if (blockId >= 13 && blockId <= 15) {
+                                // Cross-Quad for Flora (Flowers, Grass)
+                                if (index === 0) {
+                                    if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
+                                    let mf = solidFaces[matId];
+                                    const uvSeq = [[0,0],[1,0],[1,1],[0,1]];
+                                    const plantPlanes = [
+                                        [[0,0,0],[1,0,1],[1,1,1],[0,1,0]],
+                                        [[0,0,1],[1,0,0],[1,1,0],[0,1,1]]
+                                    ];
+                                    for (let plane of plantPlanes) {
+                                        let startV = mf.pos.length / 3;
+                                        let cv = 0;
+                                        for (let p of plane) {
+                                            mf.pos.push(x + p[0], y + p[1], z + p[2]);
+                                            mf.norm.push(0, 1, 0);
+                                            mf.uv.push(uvSeq[cv][0], uvSeq[cv][1]);
+                                            cv++;
+                                        }
+                                        mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
+                                    }
+                                }
                                     if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
                                     let mf = solidFaces[matId];
                                     const h = 0.125; // 2 pixels high
