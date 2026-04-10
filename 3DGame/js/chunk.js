@@ -425,57 +425,6 @@ export class Chunk {
                                         mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
                                     }
                                 }
-                                    if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
-                                    let mf = solidFaces[matId];
-                                    const h = 0.125; // 2 pixels high
-                                    
-                                    let startV = mf.pos.length / 3;
-                                    const top = [[0,h,0],[1,h,0],[1,h,1],[0,h,1]];
-                                    for(let p of top) { 
-                                        mf.pos.push(x + p[0], y + p[1], z + p[2]); 
-                                        mf.norm.push(0, 1, 0); 
-                                    }
-                                    mf.uv.push(0,0, 1,0, 1,1, 0,1);
-                                    mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
-
-                                    const sides = [
-                                        [[0,0,1],[1,0,1],[1,h,1],[0,h,1]], // Z+
-                                        [[1,0,0],[0,0,0],[0,h,0],[1,h,0]], // Z-
-                                        [[1,0,1],[1,0,0],[1,h,0],[1,h,1]], // X+
-                                        [[0,0,0],[0,0,1],[0,h,1],[0,h,0]]  // X-
-                                    ];
-                                    const norms = [[0,0,1],[0,0,-1],[1,0,0],[-1,0,0]];
-                                    for(let si=0; si<4; si++) {
-                                        startV = mf.pos.length / 3;
-                                        for(let p of sides[si]) {
-                                            mf.pos.push(x + p[0], y + p[1], z + p[2]);
-                                            mf.norm.push(norms[si][0], norms[si][1], norms[si][2]);
-                                        }
-                                        mf.uv.push(0,1, 1,1, 1,0, 0,0); 
-                                        mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
-                                    }
-                                }
-                            } else if (blockId >= 13 && blockId <= 15) {
-                                // Cross-Quad for Flora (Flowers, Grass)
-                                if (index === 0) {
-                                    if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
-                                    let mf = solidFaces[matId];
-                                    const plantPlanes = [
-                                        [[0,0,0],[1,0,1],[1,1,1],[0,1,0]],
-                                        [[0,0,1],[1,0,0],[1,1,0],[0,1,1]]
-                                    ];
-                                    for (let plane of plantPlanes) {
-                                        let startV = mf.pos.length / 3;
-                                        let cv = 0;
-                                        for (let p of plane) {
-                                            mf.pos.push(x + p[0], y + p[1], z + p[2]);
-                                            mf.norm.push(0, 1, 0);
-                                            mf.uv.push(uvSeq[cv][0], uvSeq[cv][1]);
-                                            cv++;
-                                        }
-                                        mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
-                                    }
-                                }
                             } else {
                                 if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
                                 let mf = solidFaces[matId];
