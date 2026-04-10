@@ -3,7 +3,7 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { BLOCKS, materials, generateMaterials, icons } from './textures.js';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './chunk.js';
 import { Mob, mobsList } from './mobs.js';
-import { setSeed } from './math.js';
+import { setSeed, fbm2D } from './math.js';
 
 let camera, scene, renderer, controls;
 window.chunks = {};
@@ -111,7 +111,15 @@ let seasonLerp = 0; // 0..1 progress within season
 
 let isRaining = false;
 let isStorming = false;
-let rainIntensity = 0; // 0..1
+try {
+    let wData = localStorage.getItem('sandbox3d_weather');
+    if (wData) {
+        let wx = JSON.parse(wData);
+        isRaining = wx.isRaining || false;
+        isStorming = wx.isStorming || false;
+    }
+} catch(e) {}
+let rainIntensity = isRaining ? 1 : 0; // 0..1
 let rainParticles = null;
 let rainAudioGain = null;
 let rainFilter = null;
@@ -274,12 +282,21 @@ function updateRain(delta, cameraPos, isSheltered) {
         rainParticles.material.size = 0.15;
     }
 
-    rainParticles.material.opacity = rainIntensity * 0.45;
+    let cameraBlock = getBlockGlobal(Math.floor(camera.position.x), Math.floor(camera.position.y), Math.floor(camera.position.z));
+    let cameraInWater = cameraBlock === BLOCKS.WATER;
+
+    if (cameraInWater) {
+        rainParticles.material.opacity = 0;
+    } else {
+        rainParticles.material.opacity = rainIntensity * 0.45;
+    }
     
     // Audio modulation
     if (rainAudioGain && rainFilter) {
         let targetFreq = isSheltered ? 400 : 1200;
         let targetVol = (isSheltered ? 0.04 : 0.12);
+        if (cameraInWater) targetVol = 0; // Rain is silent underwater
+        
         let wx = Math.floor(camera.position.x), wz = Math.floor(camera.position.z);
         let surfaceY = getSurfaceY(wx, wz);
         if (camera.position.y < surfaceY - 9) targetVol = 0; 
@@ -680,32 +697,50 @@ function init() {
         console.error('Mob spawn error:', e);
     }
 
-    // Find a dry spawn point (not in water) within radius 40
-    let spawnX = 0, spawnZ = 0;
+    // Find a dry spawn point (not in water) using the raw noise function
+    let spawnBaseX = Math.floor(((currentSeed * 73) % 10000) - 5000);
+    let spawnBaseZ = Math.floor(((currentSeed * 137) % 10000) - 5000);
+    let spawnX = spawnBaseX, spawnZ = spawnBaseZ;
+    let spawnY = 80;
+    
     outer:
-    for (let r = 0; r <= 40; r += 2) {
-        for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / (r === 0 ? 1 : r + 1)) {
-            let tx = r === 0 ? 0 : Math.round(Math.cos(angle) * r);
-            let tz = r === 0 ? 0 : Math.round(Math.sin(angle) * r);
-            let topBlock = BLOCKS.AIR;
-            for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
-                let b = getBlockGlobal(tx, y, tz);
-                if (b !== BLOCKS.AIR) { topBlock = b; break; }
+    for (let r = 0; r <= 150; r += 5) {
+        let steps = r === 0 ? 1 : Math.max(8, r);
+        for (let angle = 0; angle < Math.PI * 2; angle += Math.PI * 2 / steps) {
+            let tx = r === 0 ? spawnBaseX : Math.round(spawnBaseX + Math.cos(angle) * r);
+            let tz = r === 0 ? spawnBaseZ : Math.round(spawnBaseZ + Math.sin(angle) * r);
+            
+            // Replicate exactly chunk.js terrain height logic
+            let baseElev = fbm2D(tx * 0.002, tz * 0.002, 4, 0.5); 
+            let baseHeight = 40 + baseElev * 32; 
+            let mountainBoost = 0;
+            if (baseElev > 0.55) {
+                mountainBoost = Math.pow((baseElev - 0.55) * 2.2, 2.5) * 90;
             }
-            if (topBlock !== BLOCKS.WATER && topBlock !== BLOCKS.AIR) {
-                spawnX = tx; spawnZ = tz; break outer;
+            let detailNoise = fbm2D(tx*0.01, tz*0.01) * 5;
+            if (baseElev > 0.55) detailNoise *= 1.0 + (baseElev - 0.55)*8;
+            
+            let distFromOrigin = Math.sqrt(tx*tx + tz*tz);
+            if (distFromOrigin < 20) {
+                baseElev = Math.min(baseElev, 0.50);
+                mountainBoost = 0;
+            }
+            
+            let surfaceY = Math.floor(baseHeight + mountainBoost + detailNoise);
+            
+            if (surfaceY > 58) { // 58 is water level
+                spawnX = tx; 
+                spawnZ = tz; 
+                spawnY = surfaceY + 3;
+                break outer;
             }
         }
     }
+    
     // Snap player to that surface
     camera.position.x = spawnX + 0.5;
     camera.position.z = spawnZ + 0.5;
-    for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
-        if (getBlockGlobal(spawnX, y, spawnZ) !== BLOCKS.AIR) {
-            camera.position.y = y + 3;
-            break;
-        }
-    }
+    camera.position.y = spawnY;
 
     renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -791,6 +826,8 @@ function init() {
         chatContainer.style.display = 'none';
         isChatOpen = false;
         if(audioCtx.state === 'suspended') audioCtx.resume();
+        if(isRaining) initRainAudio();
+        if(isStorming) initBlizzardAudio();
         ambientDayTracks.forEach(t => t.play().catch(e => console.log('Audio play error:', e)));
         ambientNightAudio.play().catch(e => console.log('Audio play error:', e));
     });
@@ -812,6 +849,9 @@ function init() {
             // ONLY pause ambient music if we are actually at the pause menu (no UI open)
             ambientDayTracks.forEach(t => t.pause());
             ambientNightAudio.pause();
+            if (audioCtx && audioCtx.state === 'running') {
+                audioCtx.suspend();
+            }
         }
     });
     
@@ -1440,24 +1480,7 @@ function animate() {
         lastWeatherChange = time;
     }
 
-    // Snow Accumulation Logic
-    if (isRaining && currentSeason === SEASONS.WINTER && !isStorming) {
-        // Randomly pick a few blocks near player to try and cover with snow
-        for (let i = 0; i < 3; i++) {
-             let rx = Math.floor(camera.position.x + (Math.random() - 0.5) * 40);
-             let rz = Math.floor(camera.position.z + (Math.random() - 0.5) * 40);
-             let ry = getSurfaceY(rx, rz);
-             
-             // If surface is grass/dirt and air above
-             let baseBlock = getBlockGlobal(rx, ry - 1, rz);
-             let topBlock = getBlockGlobal(rx, ry, rz);
-             if (topBlock === BLOCKS.AIR && (baseBlock === BLOCKS.GRASS || baseBlock === BLOCKS.DIRT)) {
-                 if (Math.random() < 0.05) { // Slow accumulation
-                     setBlockGlobal(rx, ry, rz, BLOCKS.SNOW_LAYER);
-                 }
-             }
-        }
-    }
+    // (Unified Lighting block removed to restore original logic below)
 
     // Storm Lightning Logic
     if (isStorming && isRaining) {
@@ -1476,7 +1499,7 @@ function animate() {
     // Atmosphere
     let stormGloom = isStorming ? 0.3 : 1.0;
     let winterGloom = (currentSeason === SEASONS.WINTER) ? 0.8 : 1.0;
-    let gloom = (1.0 - (rainIntensity * 0.45)) * stormGloom * winterGloom;
+    let gloom = (1.0 - (rainIntensity * 0.70)) * stormGloom * winterGloom;
     
     // Modulate lightning for player view
     let viewLightning = lightningLevel;
@@ -1488,7 +1511,7 @@ function animate() {
     
     const baseFogColor = new THREE.Color(dayNess > 0 ? 0x87CEEB : 0x0a0a1a);
     // Rainy fog now adjusts based on dayNess and Season
-    let rainFogHex = isStorming ? 0x111122 : 0x444455;
+    let rainFogHex = isStorming ? 0x111122 : 0x222233;
     if (currentSeason === SEASONS.WINTER) rainFogHex = 0xeeeeff; // White-ish winter fog
     if (dayNess <= 0) {
         rainFogHex = isStorming ? 0x020205 : 0x080810; // Dark night rain
@@ -1496,14 +1519,30 @@ function animate() {
     }
     
     const rainFogColor = new THREE.Color(rainFogHex);
-    const lightningColor = new THREE.Color(0xffffff);
+    
+    // --- INTEGRATED VISUALS (Weather + Underwater) ---
+    let cameraBlock = getBlockGlobal(Math.floor(camera.position.x), Math.floor(camera.position.y), Math.floor(camera.position.z));
+    let cameraInWater = cameraBlock === BLOCKS.WATER;
 
-    let finalFogColor = baseFogColor.clone().lerp(rainFogColor, rainIntensity);
-    if (viewLightning > 0) finalFogColor.lerp(lightningColor, viewLightning * 0.8);
-
-    scene.fog.color.copy(finalFogColor);
-    scene.background.copy(scene.fog.color);
-    scene.fog.far = 100 - (rainIntensity * 40) - (isStorming ? 20 : 0) - (currentSeason === SEASONS.WINTER ? 10 : 0);
+    if (cameraInWater) {
+        scene.background = new THREE.Color(0x103090);
+        if (scene.fog) {
+            scene.fog.color.set(0x103090);
+            scene.fog.near = 0.1;
+            scene.fog.far = 15;
+        }
+    } else {
+        // RESTORED ORIGINAL GITHUB LOGIC
+        const lightningColor = new THREE.Color(0xffffff);
+        let finalFogColor = baseFogColor.clone().lerp(rainFogColor, rainIntensity);
+        if (viewLightning > 0) finalFogColor.lerp(lightningColor, viewLightning * 0.8);
+        
+        scene.fog.color.copy(finalFogColor);
+        scene.background.copy(scene.fog.color);
+        scene.fog.near = 10;
+        // Adaptive distance from original code
+        scene.fog.far = 100 - (rainIntensity * 40) - (isStorming ? 20 : 0) - (currentSeason === SEASONS.WINTER ? 10 : 0);
+    }
 
     // Mobs
     for (let idx = 0; idx < mobsList.length; idx++) {
@@ -1521,6 +1560,7 @@ function animate() {
     // Persistence
     if (Math.floor(time / 2000) !== Math.floor(prevTime / 2000)) {
         localStorage.setItem('sandbox3d_gameTime', gameTime);
+        localStorage.setItem('sandbox3d_weather', JSON.stringify({isRaining: isRaining, isStorming: isStorming}));
         updateDynamicSpawning();
     }
 
@@ -1543,7 +1583,7 @@ function animate() {
         let cameraBlock = getBlockGlobal(Math.floor(camera.position.x), Math.floor(camera.position.y), Math.floor(camera.position.z));
         
         let inWater = headBlock === BLOCKS.WATER || feetBlock === BLOCKS.WATER;
-        let cameraInWater = cameraBlock === BLOCKS.WATER;
+
 
         // Gravity / Buoyancy
         if (!flyMode) {
@@ -1630,7 +1670,11 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('sandbox3d_mods', JSON.stringify({}));
         
         localStorage.removeItem('sandbox3d_gameTime'); // Reset time
+        localStorage.removeItem('sandbox3d_weather'); // Reset weather
         gameTime = Math.PI / 4; // Start at morning
+        isRaining = false;
+        isStorming = false;
+        rainIntensity = 0;
         
         window.chests = {};
         localStorage.setItem('sandbox3d_chests', JSON.stringify({}));
