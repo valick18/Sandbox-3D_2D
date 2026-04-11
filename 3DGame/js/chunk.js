@@ -757,6 +757,8 @@ export class Chunk {
             
             this.mesh = new THREE.Mesh(geometry, materialOrder);
             this.mesh.position.set(this.chunkX * CHUNK_SIZE, 0, this.chunkZ * CHUNK_SIZE);
+            this.mesh.receiveShadow = true;
+            this.mesh.castShadow = true;
             this.scene.add(this.mesh);
         }
         
@@ -771,6 +773,7 @@ export class Chunk {
             this.waterMesh = new THREE.Mesh(wGeom, this.materialArray[BLOCKS.WATER]);
             this.waterMesh.position.set(this.chunkX * CHUNK_SIZE, 0, this.chunkZ * CHUNK_SIZE);
             this.waterMesh.userData = { ignoreRaycast: true };
+            this.waterMesh.receiveShadow = true; // Water receives shadows from buildings/mobs
             this.scene.add(this.waterMesh);
         }
     }

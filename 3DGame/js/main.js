@@ -888,10 +888,28 @@ function init() {
     ambientLight = new THREE.AmbientLight(0xcccccc, 0.4);
     scene.add(ambientLight);
     
-    dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(50, 100, 50);
+    dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    dirLight.position.set(100, 150, 100);
     dirLight.castShadow = true;
+    
+    // Configure shadow properties
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 0.5;
+    dirLight.shadow.camera.far = 500;
+    dirLight.shadow.camera.left = -120;
+    dirLight.shadow.camera.right = 120;
+    dirLight.shadow.camera.top = 120;
+    dirLight.shadow.camera.bottom = -120;
+    dirLight.shadow.bias = -0.0001; // Closer bias to avoid floating shadows
+    
     scene.add(dirLight);
+    
+    // Add shadow target (dummy empty that sun follows)
+    const shadowTarget = new THREE.Object3D();
+    scene.add(shadowTarget);
+    dirLight.target = shadowTarget;
+    window.shadowTarget = shadowTarget;
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 1000);
     camera.position.y = 80; // Default high to avoid spawning underground immediately
@@ -1016,6 +1034,11 @@ function init() {
     renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
+    
+    // Enable shadows
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap; 
+    
     document.body.appendChild(renderer.domElement);
     
     updateInventoryUI();
@@ -1947,17 +1970,30 @@ function animate() {
     updateClouds(delta, camera.position.x, camera.position.z);
     
     // Sky bodies
-    let sunDist = 350;
-    let tilt = 40; 
-    dirLight.position.set(Math.cos(sunAngle) * sunDist, Math.sin(sunAngle) * sunDist, tilt);
+    let sunDist = 250;
+    let tilt = 80; 
+    let sunPos = new THREE.Vector3(
+        Math.cos(sunAngle) * sunDist, 
+        Math.sin(sunAngle) * sunDist, 
+        tilt
+    );
     
+    // Update Directional Light (Sun/Shadow caster)
+    dirLight.position.copy(sunPos).add(camera.position);
+    if (window.shadowTarget) {
+        window.shadowTarget.position.copy(camera.position);
+    }
+    
+    // Dim sun as it sets
+    dirLight.intensity = Math.max(0, dayNess) * 0.8 + 0.1;
+
     const baseSunColor = new THREE.Color(0xffeb3b);
     const sunsetSunColor = new THREE.Color(0xff8a65);
     let colorFac = Math.pow(1.0 - Math.abs(dayNess), 3); 
     sunMesh.material.color.copy(baseSunColor).lerp(sunsetSunColor, colorFac);
     
-    sunMesh.position.copy(dirLight.position).add(camera.position);
-    moonMesh.position.set(-dirLight.position.x, -dirLight.position.y, -dirLight.position.z).add(camera.position);
+    sunMesh.position.copy(sunPos).add(camera.position);
+    moonMesh.position.set(-sunPos.x, -sunPos.y, -sunPos.z).add(camera.position);
     starsMesh.position.copy(camera.position);
 
     sunMesh.material.opacity = Math.max(0, Math.min(1, dayNess * 5));

@@ -27,6 +27,8 @@ function makePart(w, h, d, color, ox=0, oy=0, oz=0) {
     let mat = new THREE.MeshLambertMaterial({ color });
     let mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(ox, oy, oz);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     return mesh;
 }
 
@@ -210,7 +212,7 @@ export class Mob {
 
     isBlocked(nx, ny, nz) {
         let r = this.isVillager ? 0.3 : (this.isDeer ? 0.35 : 0.18);
-        let h = this.isVillager ? 0.7 : (this.isDeer ? 0.96 : 0.20);
+        let h = this.isVillager ? 0.43 : (this.isDeer ? 0.85 : 0.25);
         let minX = Math.floor(nx - r), maxX = Math.floor(nx + r);
         let minZ = Math.floor(nz - r), maxZ = Math.floor(nz + r);
         let minY = Math.floor(ny - h + 0.1); 
@@ -279,7 +281,7 @@ export class Mob {
             }
         }
 
-        let halfH = this.isVillager ? 0.7 : (this.isDeer ? 0.96 : 0.20);
+        let halfH = this.isVillager ? 0.43 : (this.isDeer ? 0.85 : 0.25);
         let dist = this.group.position.distanceTo(playerPos);
 
         if (this.isBird && this.birdState === 'sitting') {
