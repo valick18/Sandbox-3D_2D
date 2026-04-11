@@ -21,6 +21,10 @@
         <div id="instructions">
             <h1>Procedural 3D Sandbox</h1>
             <div id="menu-buttons" style="margin-top: 20px; text-align: center;">
+                <div style="margin-bottom: 15px;">
+                    <label for="player-name-input" style="font-size: 14px; color: #ccc; display: block; margin-bottom: 5px;">Ваше ім'я:</label>
+                    <input type="text" id="player-name-input" placeholder="Введіть ім'я..." style="padding: 8px; border-radius: 4px; border: 1px solid #555; background: #222; color: white; text-align: center; width: 200px;">
+                </div>
                 <button id="btn-new-world" style="padding: 10px 20px; font-size: 18px; cursor: pointer;">New World</button>
                 <button id="btn-load-world" style="padding: 10px 20px; font-size: 18px; cursor: pointer; margin-left:10px;" disabled>Load World</button>
             </div>
@@ -83,6 +87,18 @@
         <div id="chat-container" style="display:none; position:absolute; bottom:100px; left:20px; width:400px; pointer-events:auto;">
             <div id="chat-log" style="max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.5); color:white; padding:10px; border-radius:4px; font-family:monospace; font-size:14px; margin-bottom:5px; pointer-events:none;"></div>
             <input type="text" id="chat-input" placeholder="Type command... /help" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.8); border:1px solid #777; color:white; padding:8px; border-radius:4px; outline:none;">
+        </div>
+
+        <div id="dialogue-ui" style="display:none; position:absolute; bottom:20px; left:50%; transform:translateX(-50%); width:600px; max-width:90%; background:rgba(20,20,30,0.95); border:2px solid #557; border-radius:12px; padding:15px; pointer-events:auto; color:white; z-index:2000; box-shadow:0 0 20px rgba(0,0,0,0.5);">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #445; padding-bottom:8px; margin-bottom:10px;">
+                <h3 id="dialogue-name" style="margin:0; color:#5af;">Житель</h3>
+            </div>
+            <div id="dialogue-log" style="max-height:150px; min-height:80px; overflow-y:auto; margin-bottom:10px; font-size:15px; line-height:1.4;"></div>
+            <div id="dialogue-typing" style="display:none; font-style:italic; font-size:12px; color:#aaa; margin-bottom:5px;">Житель щось друкує...</div>
+            <div style="display:flex; gap:10px;">
+                <input type="text" id="dialogue-input" placeholder="Напишіть ваше повідомлення..." style="flex-grow:1; background:#111; border:1px solid #445; color:white; padding:10px; border-radius:6px; outline:none;">
+                <button id="btn-dialogue-close" style="background:#445; border:none; color:white; padding:5px 15px; border-radius:6px; cursor:pointer;">Закрити (Esc)</button>
+            </div>
         </div>
     </div>
     <script type="module" src="js/main.js"></script>

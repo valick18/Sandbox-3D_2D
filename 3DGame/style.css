@@ -203,3 +203,22 @@ body {
     pointer-events: auto;
     color: white;
 }
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+#player-name-input:focus {
+    border-color: #5af !important;
+    box-shadow: 0 0 5px #5af;
+    outline: none;
+}
+
+#dialogue-log::-webkit-scrollbar {
+    width: 6px;
+}
+#dialogue-log::-webkit-scrollbar-thumb {
+    background: #445;
+    border-radius: 3px;
+}

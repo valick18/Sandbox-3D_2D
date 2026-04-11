@@ -1,12 +1,15 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { BLOCKS, materials, generateMaterials, icons } from './textures.js';
-import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT, getWorldSurfaceY, getVillageSeed, VILLAGE_GRID } from './chunk.js';
+import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT, getWorldSurfaceY, getVillageSeed, VILLAGE_GRID, getVillagePartAtWorld, getHouseCentersInChunk } from './chunk.js';
 import { Mob, mobsList } from './mobs.js';
 import { setSeed, fbm2D } from './math.js';
+import { dialogueService } from './services/dialogue.js';
 
 let camera, scene, renderer, controls;
 window.chunks = {};
+window.mobsList = mobsList;
+window.getSurfaceY = getWorldSurfaceY;
 let chunks = window.chunks;
 
 const VIEW_DISTANCE = 8;
@@ -1170,11 +1173,11 @@ function init() {
 
     controls.addEventListener('unlock', () => {
         // Don't show the pause overlay when any UI is open
-        if (craftingMode === 'none') {
+        if (craftingMode === 'none' && (!dialogueService || !dialogueService.isUIOpen)) {
             instructions.style.display = 'flex';
             // ONLY pause ambient music if we are actually at the pause menu (no UI open)
-            ambientDayTracks.forEach(t => t.pause());
-            ambientNightAudio.pause();
+            if (typeof ambientDayTracks !== 'undefined') ambientDayTracks.forEach(t => t.pause());
+            if (typeof ambientNightAudio !== 'undefined') ambientNightAudio.pause();
             if (audioCtx && audioCtx.state === 'running') {
                 audioCtx.suspend();
             }
@@ -1183,6 +1186,17 @@ function init() {
     
     scene.add(controls.getObject());
 
+    // Helper to find a Mob instance by climbing the parent tree
+    function getMobFromObject(obj) {
+        while (obj) {
+            if (obj.userData && obj.userData.isMob && obj.userData.mob) {
+                return obj.userData.mob;
+            }
+            obj = obj.parent;
+        }
+        return null;
+    }
+
     const onKeyDown = function (event) {
         if (event.repeat) {
             keys[event.code] = true;
@@ -1190,6 +1204,17 @@ function init() {
         }
         keys[event.code] = true;
         
+        if (dialogueService.isUIOpen && (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA')) {
+            if (event.code === 'Escape') {
+                dialogueService.closeDialogue();
+                setTimeout(() => {
+                    if (!dialogueService.isUIOpen) controls.lock();
+                }, 150);
+            }
+            // NO preventDefault() for other keys (like Space) when typing!
+            return;
+        }
+
         switch (event.code) {
             case 'KeyW': moveForward = true; break;
             case 'KeyA': moveLeft = true; break;
@@ -1199,6 +1224,10 @@ function init() {
                 isSprinting = true;
                 break;
             case 'Space':
+                if (dialogueService.isUIOpen) {
+                    event.preventDefault();
+                    return;
+                }
                 const now = performance.now();
                 if (now - lastSpaceTime < 200) {
                     flyMode = !flyMode;
@@ -1214,7 +1243,20 @@ function init() {
                 }
                 break;
             case 'KeyE':
+                if (dialogueService.isUIOpen) {
+                    event.preventDefault();
+                    return;
+                }
                 if (!controls.isLocked) return;
+                break;
+            case 'AltLeft':
+                if (dialogueService.isUIOpen) {
+                    event.preventDefault();
+                    dialogueService.startRecording();
+                }
+                break;
+            case 'KeyV':
+                // Removed to avoid conflict with typing
                 break;
             case 'Enter':
             case 'Slash':
@@ -1230,6 +1272,9 @@ function init() {
     };
 
     const onKeyUp = function (event) {
+        if (dialogueService.isUIOpen && (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA')) {
+            return;
+        }
         keys[event.code] = false;
         switch (event.code) {
             case 'ArrowUp':
@@ -1240,6 +1285,16 @@ function init() {
             case 'KeyS': moveBackward = false; break;
             case 'ArrowRight':
             case 'KeyD': moveRight = false; break;
+            case 'AltLeft':
+                dialogueService.stopRecording();
+                break;
+            case 'KeyV':
+                // Removed stopRecording for V to support Alt
+                break;
+        }
+
+        if (dialogueService.isUIOpen) {
+            moveForward = false; moveBackward = false; moveLeft = false; moveRight = false;
         }
         
         // Inventory Slots
@@ -1271,6 +1326,14 @@ function init() {
                 let collidable = scene.children.filter(obj => !obj.userData.ignoreRaycast);
                 let intersects = raycaster.intersectObjects(collidable);
                 if (intersects.length > 0 && intersects[0].distance <= 8) {
+                     // Check for villager interaction using the hierarchy helper
+                     let hitMob = getMobFromObject(intersects[0].object);
+                     if (hitMob && hitMob.isVillager) {
+                         dialogueService.openDialogue(hitMob); // Open FIRST to set isUIOpen state
+                         controls.unlock(); // Then unlock
+                         return;
+                     }
+
                      let point = intersects[0].point;
                      let normal = intersects[0].face.normal;
                      let targetX = Math.floor(point.x - normal.x * 0.1);
@@ -1352,6 +1415,10 @@ function init() {
             isChatOpen = false;
             controls.lock();
         }
+        if (e.code === 'Escape' && dialogueService.isUIOpen) {
+            dialogueService.closeDialogue();
+            controls.lock();
+        }
     });
 
     document.addEventListener('keydown', onKeyDown);
@@ -1379,15 +1446,15 @@ function init() {
             if (intersect.distance > 8) return; // Reach
             
             // Entity Hit
-            if (intersect.object.userData.isMob) {
+            let hitMob = getMobFromObject(intersect.object);
+            if (hitMob) {
                 if (e.button === 0) {
-                     let mob = intersect.object.userData.mob;
-                     let died = mob.takeDamage();
+                     let died = hitMob.takeDamage();
                      // Deer grunt (200), Rabbit squeak (600)
-                     playSound(mob.isDeer ? 200 : 800, 0.1); 
+                     playSound(hitMob.isDeer ? 200 : 800, 0.1); 
                      
                      if (died) {
-                          inventory.addItem(BLOCKS.MEAT, mob.isDeer ? 2 : 1);
+                          inventory.addItem(BLOCKS.MEAT, hitMob.isDeer ? 2 : 1);
                           updateInventoryUI();
                      }
                 }
@@ -1395,6 +1462,7 @@ function init() {
             }
             
             let point = intersect.point;
+            if (!intersect.face) return;
             let normal = intersect.face.normal;
             
             // For right-click, first check what block we are aiming at.
@@ -1581,26 +1649,43 @@ function spawnMobsOnSurface(scene) {
 }
 
 function spawnOneMobInChunk(cx, cz) {
-    // Chance to spawn a mob in this new chunk (25%)
-    if (Math.random() > 0.25) return;
+    // --- RESIDENT PRIORITY SPAWNING (100% chance if houses exist) ---
+    let houses = getHouseCentersInChunk(cx, cz);
+    if (houses.length > 0) {
+        for (let house of houses) {
+            for (let i = 0; i < 2; i++) {
+                // Fixed separation ensures coordinate hash variety, forcedGender ensures parity
+                let sx = house.x + (i === 0 ? 1.2 : -1.2);
+                let sz = house.z + (i === 0 ? 1.2 : -1.2);
+                let floorY = house.y + 1;
 
-    // Pick a random block within chunk
+                // Pass i%2 as forcedGender (6th arg)
+                let mob = new Mob(scene, getBlockGlobal, 'villager', sx, sz, i % 2);
+                mob.homePos.set(house.x + 0.5, floorY, house.z + 0.5);
+                mob.group.position.set(sx, floorY + 0.7, sz);
+            }
+        }
+    }
+
+    // --- WILD ANIMAL SPAWNING (Subject to random chance and limits) ---
+    if (Math.random() > 0.25) return;
+    if (mobsList.length > 50) return;
+
+    // Pick a random block within chunk for wild mob
     let x = Math.floor(Math.random() * 16);
     let z = Math.floor(Math.random() * 16);
     let wx = cx * 16 + x;
     let wz = cz * 16 + z;
-
     let wy = getSurfaceY(wx, wz);
-    // Weighted random pool: focus on Deer and Crows
+
     const pool = ['rabbit', 'deer', 'deer', 'deer', 'crow', 'crow', 'sparrow', 'sparrow', 'cormorant'];
     let type = pool[Math.floor(Math.random() * pool.length)];
     
-    let mob = new Mob(scene, getBlockGlobal, type);
+    let mob = new Mob(scene, getBlockGlobal, type, wx, wz);
     
     if (mob.isBird) {
-        mob.group.position.set(wx + 0.5, 95 + Math.random() * 20, wz + 0.5);
+        mob.group.position.set(wx + 0.5, wy + 25 + Math.random() * 10, wz + 0.5);
     } else {
-        // Place slightly HIGHER for large mobs like deer to avoid ground clipping
         let offset = type === 'deer' ? 0.8 : 0.5;
         mob.group.position.set(wx + 0.5, wy + offset, wz + 0.5);
     }
@@ -1748,7 +1833,8 @@ function animate() {
     requestAnimationFrame(animate);
 
     const time = performance.now();
-    const delta = Math.min((time - prevTime) / 1000, 0.1); // clamp delta
+    let delta = (time - prevTime) / 1000;
+    if (delta > 0.1) delta = 0.1; // Safety clamp to prevent physics "explosions"
     
     // Process infinite world generation
     updateDynamicChunks();
@@ -1879,6 +1965,10 @@ function animate() {
     // Stars fade out as rain/storm intensity increases
     starsMesh.material.opacity = (dayNess > 0) ? 0 : (Math.min(1.0, -dayNess * 2.0) * (1.0 - rainIntensity));
 
+    window.dayNess = dayNess;
+    window.getVillagePartAtWorld = getVillagePartAtWorld;
+    window.getSurfaceY = getSurfaceY;
+    
     // --- SHELTER DETECTION (Shared) ---
     let wx = Math.floor(camera.position.x);
     let wz = Math.floor(camera.position.z);
@@ -1993,7 +2083,11 @@ function animate() {
 
     // Mobs
     for (let idx = 0; idx < mobsList.length; idx++) {
-        try { mobsList[idx].update(delta, camera.position); } catch(e) {}
+        try { 
+            mobsList[idx].update(delta, camera.position); 
+        } catch(e) {
+            console.error("Mob update error:", e, mobsList[idx]);
+        }
     }
 
     // Audio volume sync
@@ -2008,7 +2102,19 @@ function animate() {
     if (Math.floor(time / 2000) !== Math.floor(prevTime / 2000)) {
         localStorage.setItem('sandbox3d_gameTime', gameTime);
         localStorage.setItem('sandbox3d_weather', JSON.stringify({isRaining: isRaining, isStorming: isStorming}));
-        updateDynamicSpawning();
+        const isNight = gameTime > Math.PI || gameTime < 0;
+    const nightFactor = Math.abs(Math.sin(gameTime));
+    const timeOfDay = (gameTime > Math.PI / 4 && gameTime < 3 * Math.PI / 4) ? 'ранок' :
+                     (gameTime >= 3 * Math.PI / 4 && gameTime < 5 * Math.PI / 4) ? 'день' :
+                     (gameTime >= 5 * Math.PI / 4 && gameTime < 7 * Math.PI / 4) ? 'вечір' : 'ніч';
+
+    window.worldState = {
+        timeOfDay,
+        weather: isStorming ? 'хуртовина' : (isRaining ? 'дощ' : 'ясно'),
+        season: currentSeason === 0 ? 'весна' : (currentSeason === 1 ? 'літо' : (currentSeason === 2 ? 'осінь' : 'зима'))
+    };
+
+    updateDynamicSpawning();
     }
 
     // --- PLAYER INPUT & INTERACTION (Only if locked) ---
@@ -2019,9 +2125,11 @@ function animate() {
         let intersects = raycaster.intersectObjects(collidable);
         if (intersects.length > 0 && intersects[0].distance <= 8) {
             let p = intersects[0].point;
-            let n = intersects[0].face.normal;
-            let tid = getBlockGlobal(Math.floor(p.x - n.x * 0.1), Math.floor(p.y - n.y * 0.1), Math.floor(p.z - n.z * 0.1));
-            document.getElementById('debug-text').innerText = tid !== BLOCKS.AIR ? `Looking at: ${BLOCK_NAMES[tid]}` : "";
+            if (intersects[0].face) {
+                let n = intersects[0].face.normal;
+                let tid = getBlockGlobal(Math.floor(p.x - n.x * 0.1), Math.floor(p.y - n.y * 0.1), Math.floor(p.z - n.z * 0.1));
+                document.getElementById('debug-text').innerText = tid !== BLOCKS.AIR ? `Looking at: ${BLOCK_NAMES[tid]}` : "";
+            }
         }
 
         // Physics
@@ -2186,6 +2294,33 @@ document.addEventListener('DOMContentLoaded', () => {
         if (posData) savedPos = JSON.parse(posData);
 
         startGame(savedPos);
+    };
+    
+    // Player Name Handling
+    const nameInput = document.getElementById('player-name-input');
+    const savedName = localStorage.getItem('sandbox3d_playername');
+    if (savedName) {
+        nameInput.value = savedName;
+        dialogueService.playerName = savedName;
+    }
+    nameInput.onchange = () => {
+        localStorage.setItem('sandbox3d_playername', nameInput.value);
+        dialogueService.playerName = nameInput.value;
+    };
+
+    // Dialogue UI Listeners
+    document.getElementById('btn-dialogue-close').onclick = () => {
+        dialogueService.closeDialogue();
+        setTimeout(() => {
+            if (!dialogueService.isUIOpen) controls.lock();
+        }, 150);
+    };
+    document.getElementById('dialogue-input').onkeydown = (e) => {
+        if (e.key === 'Enter') {
+            const text = e.target.value;
+            e.target.value = '';
+            dialogueService.handleUserMessage(text);
+        }
     };
 });
 

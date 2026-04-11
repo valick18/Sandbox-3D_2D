@@ -32,10 +32,56 @@ export function getVillageSeed(cellX, cellZ) {
     return Math.abs(seed);
 }
 
+export function getHouseCentersInChunk(cx, cz) {
+    let houses = [];
+    const vGrid = 100;
+    const HOUSE_SLOTS = [
+        { x: 14, z: 0 }, { x: -14, z: 0 }, { x: 0, z: 14 }, { x: 0, z: -14 },
+        { x: 16, z: 16 }, { x: -16, z: -16 }, { x: 16, z: -16 }
+    ];
+    
+    // Check 3x3 neighborhood of village grid cells
+    let worldX = cx * 16;
+    let worldZ = cz * 16;
+    let cellX = Math.floor(worldX / vGrid);
+    let cellZ = Math.floor(worldZ / vGrid);
+
+    for (let tcX = cellX - 1; tcX <= cellX + 1; tcX++) {
+        for (let tcZ = cellZ - 1; tcZ <= cellZ + 1; tcZ++) {
+            let seed = getVillageSeed(tcX, tcZ);
+            if (seed > 0.2) continue; // No village here
+
+            let vCX = tcX * vGrid + 30 + Math.floor(seed * (vGrid - 60));
+            let vCZ = tcZ * vGrid + 30 + Math.floor(((seed * 321.4) % 1) * (vGrid - 60));
+
+            // Flatness check (must match checkVillageInCell for consistency)
+            let sY = getWorldSurfaceY(vCX, vCZ);
+            if (sY < 60 || sY > 90) continue; 
+            const SAMPLE_DIST = 18;
+            let h1 = getWorldSurfaceY(vCX + SAMPLE_DIST, vCZ + SAMPLE_DIST);
+            let h2 = getWorldSurfaceY(vCX - SAMPLE_DIST, vCZ - SAMPLE_DIST);
+            if (Math.abs(h1 - sY) > 8 || Math.abs(h2 - sY) > 8) continue; 
+
+            for (let i = 0; i < HOUSE_SLOTS.length; i++) {
+                let hSeed = (Math.sin(vCX + vCZ + i * 57.1) * 43758.5453) % 1;
+                if (Math.abs(hSeed) > 0.8 && i > 4) continue;
+
+                let hX = vCX + HOUSE_SLOTS[i].x;
+                let hZ = vCZ + HOUSE_SLOTS[i].z;
+
+                // Check if this specific house falls within our chunk boundaries
+                if (Math.floor(hX / 16) === Number(cx) && Math.floor(hZ / 16) === Number(cz)) {
+                    houses.push({ x: hX, z: hZ, y: sY });
+                }
+            }
+        }
+    }
+    return houses;
+}
+
 export function getVillagePartAtWorld(wx, wz) {
     let cellX = Math.floor(wx / VILLAGE_GRID);
     let cellZ = Math.floor(wz / VILLAGE_GRID);
-    
     let bestResult = null;
 
     // Check 3x3 neighborhood to ensure villages cross grid boundaries seamlessly
@@ -328,7 +374,7 @@ export class Chunk {
                                  }
                             } else if (vPart.type === 'path') {
                                  let relY = y - targetY;
-                                 if (relY === 0) this.data[idx] = BLOCKS.DIRT;
+                                 if (relY === 0) this.data[idx] = BLOCKS.BRICK;
                                  else if (relY > 0 && relY <= 3) this.data[idx] = BLOCKS.AIR;
                                  else if (relY < 0) this.data[idx] = BLOCKS.DIRT;
                             } else if (vPart.type === 'plateau') {
