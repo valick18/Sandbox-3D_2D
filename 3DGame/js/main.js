@@ -1038,6 +1038,63 @@ function init() {
 
     function processCommand(cmd) {
         const c = cmd.toLowerCase().trim();
+        if (c.startsWith('/time ')) {
+            const arg = c.split(' ')[1];
+            if (arg === 'sunset') { gameTime = Math.PI; addChatMessage("Time set to Sunset"); }
+            else if (arg === 'day') { gameTime = Math.PI / 2; addChatMessage("Time set to Day"); }
+            else if (arg === 'night') { gameTime = Math.PI * 1.5; addChatMessage("Time set to Night"); }
+            return;
+        }
+        if (c === '/tp village') {
+            addChatMessage("Searching for nearest village candidate...");
+            let px = camera.position.x;
+            let pz = camera.position.z;
+            let found = false;
+            // Scan village grid around player
+            let cellX = Math.floor(px / VILLAGE_GRID);
+            let cellZ = Math.floor(pz / VILLAGE_GRID);
+            for (let r = 0; r < 20; r++) {
+                for (let i = -r; i <= r; i++) {
+                    for (let j = -r; j <= r; j++) {
+                        if (Math.abs(i) !== r && Math.abs(j) !== r) continue;
+                        let tcX = cellX + i;
+                        let tcZ = cellZ + j;
+                        let seed = getVillageSeed(tcX, tcZ);
+                        if (seed <= 0.20) {
+                            let vCX = tcX * VILLAGE_GRID + 30 + Math.floor(seed * (VILLAGE_GRID - 60));
+                            let vCZ = tcZ * VILLAGE_GRID + 30 + Math.floor(((seed * 321.4) % 1) * (VILLAGE_GRID - 60));
+                            let sY = getWorldSurfaceY(vCX, vCZ);
+                            if (sY >= 60 && sY <= 90) {
+                                // Double check flatness logic must match chunk.js
+                                const SAMPLE_DIST = 18;
+                                let h1 = getWorldSurfaceY(vCX + SAMPLE_DIST, vCZ + SAMPLE_DIST);
+                                let h2 = getWorldSurfaceY(vCX - SAMPLE_DIST, vCZ - SAMPLE_DIST);
+                                if (Math.abs(h1 - sY) <= 8 && Math.abs(h2 - sY) <= 8) {
+                                    camera.position.set(vCX + 0.5, sY + 20.0, vCZ + 0.5);
+                                    velocity.set(0, 0, 0);
+                                    flyMode = true; // Safety flight mode
+                                    
+                                    // Failsafe: push player up if stuck in a block
+                                    let failSafe = 50;
+                                    while (checkAABB(camera.position.x, camera.position.y, camera.position.z) && failSafe > 0) {
+                                        camera.position.y += 1.0;
+                                        failSafe--;
+                                    }
+                                    
+                                    addChatMessage(`Village found at ${Math.floor(vCX)}, ${Math.floor(vCZ)}. Flight mode enabled!`);
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (found) break;
+                }
+                if (found) break;
+            }
+            if (!found) addChatMessage("No village found within reach.");
+            return;
+        }
         if (c === '/day') {
             gameTime = Math.PI / 2;
             addChatMessage("Time set to Day");
@@ -1082,40 +1139,6 @@ function init() {
         } else if (c === '/winter') {
             gameTime = (3 * 10) * Math.PI * 2 + (Math.PI / 4);
             addChatMessage("A cold wind blows. Winter has come.");
-        } else if (c === '/tpvillage') {
-            // Scan nearby grid for a village
-            let px = Math.floor(camera.position.x / VILLAGE_GRID);
-            let pz = Math.floor(camera.position.z / VILLAGE_GRID);
-            let found = false;
-            
-            searchIdx:
-            for (let r = 0; r < 20; r++) { // Scan 20x20 village cells
-                for (let dx = -r; dx <= r; dx++) {
-                    for (let dz = -r; dz <= r; dz++) {
-                        if (Math.abs(dx) !== r && Math.abs(dz) !== r && r > 0) continue; 
-                        let cx = px + dx;
-                        let cz = pz + dz;
-                        let seed = getVillageSeed(cx, cz);
-                        if (seed <= 0.20) {
-                            // Check flatness approx
-                            let vCX = cx * VILLAGE_GRID + 30 + Math.floor(seed * (VILLAGE_GRID - 60));
-                            let vCZ = cz * VILLAGE_GRID + 30 + Math.floor(((seed * 321.4) % 1) * (VILLAGE_GRID - 60));
-                            let sY = getWorldSurfaceY(vCX, vCZ);
-                            if (sY >= 60 && sY <= 90) {
-                                // Double check corners briefly
-                                let h1 = getWorldSurfaceY(vCX + 18, vCZ + 18);
-                                let h2 = getWorldSurfaceY(vCX - 18, vCZ - 18);
-                                if (Math.abs(h1 - sY) < 6 && Math.abs(h2 - sY) < 6) {
-                                    camera.position.set(vCX + 5, sY + 2, vCZ + 5);
-                                    addChatMessage(`Teleported to village at ${vCX}, ${vCZ}`);
-                                    found = true;
-                                    break searchIdx;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             if (!found) addChatMessage("No village found in nearby area.");
         } else if (c === '/help') {
             addChatMessage("Commands: /day, /night, /sunrise, /sunset, /rain, /storm, /spring, /summer, /autumn, /winter, /tpvillage, /help");
@@ -1928,7 +1951,12 @@ function animate() {
     ambientLight.intensity = (0.4 * gloom) + (viewLightning * 2.0);
     dirLight.intensity = (0.8 * gloom) + (viewLightning * 1.5);
     
-    const baseFogColor = new THREE.Color(dayNess > 0 ? 0x87CEEB : 0x0a0a1a);
+    const dayColor = new THREE.Color(0x87CEEB);
+    const nightColor = new THREE.Color(0x0a0a1a);
+    // Smoothly transition between day and night colors around the horizon (lerp)
+    // Widened window (0.3 instead of 0.1) for a much longer, more cinematic sunset
+    let skyTransition = Math.max(0, Math.min(1, (dayNess + 0.3) / 0.6));
+    const baseFogColor = nightColor.clone().lerp(dayColor, skyTransition);
     // Rainy fog now adjusts based on dayNess and Season
     let rainFogHex = isStorming ? 0x111122 : 0x222233;
     if (currentSeason === SEASONS.WINTER) rainFogHex = 0xeeeeff; // White-ish winter fog

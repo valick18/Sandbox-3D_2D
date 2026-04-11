@@ -55,7 +55,7 @@ export function getVillagePartAtWorld(wx, wz) {
 function checkVillageInCell(tcX, tcZ, wx, wz) {
     // Deterministic seed for this village sector
     let seed = getVillageSeed(tcX, tcZ);
-    if (seed > 0.20) return null; 
+    if (seed > 0.20) return null; // Original 20% frequency
     
     let vCX = tcX * VILLAGE_GRID + 30 + Math.floor(seed * (VILLAGE_GRID - 60));
     let vCZ = tcZ * VILLAGE_GRID + 30 + Math.floor(((seed * 321.4) % 1) * (VILLAGE_GRID - 60));
@@ -66,7 +66,7 @@ function checkVillageInCell(tcX, tcZ, wx, wz) {
     const SAMPLE_DIST = 18;
     let h1 = getWorldSurfaceY(vCX + SAMPLE_DIST, vCZ + SAMPLE_DIST);
     let h2 = getWorldSurfaceY(vCX - SAMPLE_DIST, vCZ - SAMPLE_DIST);
-    if (Math.abs(h1 - sY) > 6 || Math.abs(h2 - sY) > 6) return null; 
+    if (Math.abs(h1 - sY) > 8 || Math.abs(h2 - sY) > 8) return null; 
 
     const V_CORE = 25;   // Interior plateau radius
     const V_OUTER = 45;  // Transition end radius
@@ -301,8 +301,7 @@ export class Chunk {
                                     } else if (relY >= 5 && relY <= 7) {
                                         let roofRadius = 4 - (relY - 5);
                                         if (Math.abs(relX) <= roofRadius && Math.abs(relZ) <= roofRadius) {
-                                            let isRoofEdge = Math.abs(relX) === roofRadius || Math.abs(relZ) === roofRadius;
-                                            this.data[idx] = isRoofEdge ? BLOCKS.WOOD : BLOCKS.PLANKS;
+                                            this.data[idx] = BLOCKS.WOOD;
                                         }
                                     } else if (relY < 0) {
                                         this.data[idx] = BLOCKS.STONE_BRICK;
