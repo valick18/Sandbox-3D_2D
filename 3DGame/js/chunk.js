@@ -5,6 +5,100 @@ import { BLOCKS } from './textures.js';
 export const CHUNK_SIZE = 16;
 export const CHUNK_HEIGHT = 128;
 
+export function getWorldSurfaceY(wx, wz) {
+    const WATER_LEVEL = 58;
+    let baseElev = fbm2D(wx * 0.002, wz * 0.002, 4, 0.5);
+    let baseHeight = 40 + baseElev * 32;
+    let mountainBoost = 0;
+    if (baseElev > 0.55) {
+        mountainBoost = Math.pow((baseElev - 0.55) * 2.2, 2.5) * 90;
+    }
+    let detailNoise = fbm2D(wx*0.01, wz*0.01) * 5;
+    if (baseElev > 0.55) detailNoise *= 1.0 + (baseElev - 0.55)*8;
+    
+    // Flat spawn zone
+    let distFromOrigin = Math.sqrt(wx*wx + wz*wz);
+    if (distFromOrigin < 20) {
+        baseElev = Math.min(baseElev, 0.50);
+        mountainBoost = 0;
+    }
+    return Math.floor(baseHeight + mountainBoost + detailNoise);
+}
+
+export const VILLAGE_GRID = 100;
+
+export function getVillageSeed(cellX, cellZ) {
+    let seed = (Math.sin(cellX * 12.9898 + cellZ * 78.233) * 43758.5453) % 1;
+    return Math.abs(seed);
+}
+
+export function getVillagePartAtWorld(wx, wz) {
+    let cellX = Math.floor(wx / VILLAGE_GRID);
+    let cellZ = Math.floor(wz / VILLAGE_GRID);
+    
+    // Deterministic seed for this village sector
+    let seed = getVillageSeed(cellX, cellZ);
+    if (seed > 0.20) return null; 
+    
+    let vCX = cellX * VILLAGE_GRID + 30 + Math.floor(seed * (VILLAGE_GRID - 60));
+    let vCZ = cellZ * VILLAGE_GRID + 30 + Math.floor(((seed * 321.4) % 1) * (VILLAGE_GRID - 60));
+    
+    let sY = getWorldSurfaceY(vCX, vCZ);
+    if (sY < 60 || sY > 90) return null; 
+    
+    const SAMPLE_DIST = 18;
+    let h1 = getWorldSurfaceY(vCX + SAMPLE_DIST, vCZ + SAMPLE_DIST);
+    let h2 = getWorldSurfaceY(vCX - SAMPLE_DIST, vCZ - SAMPLE_DIST);
+    if (Math.abs(h1 - sY) > 6 || Math.abs(h2 - sY) > 6) return null; 
+
+    const V_CORE = 28;
+    const V_OUTER = 42;
+    let dxV = wx - vCX;
+    let dzV = wz - vCZ;
+    let distV = Math.max(Math.abs(dxV), Math.abs(dzV));
+    
+    if (distV > V_OUTER) return null;
+
+    let influence = 1.0;
+    if (distV > V_CORE) {
+        influence = 1.0 - (distV - V_CORE) / (V_OUTER - V_CORE);
+    }
+
+    if (Math.abs(dxV) <= 2 && Math.abs(dzV) <= 2) {
+        return { type: 'well', vCX, vCZ, surfaceY: sY, influence: 1.0 };
+    }
+
+    const HOUSE_SLOTS = [
+        { x: 14, z: 0 }, { x: -14, z: 0 }, { x: 0, z: 14 }, { x: 0, z: -14 },
+        { x: 16, z: 16 }, { x: -16, z: -16 }, { x: 16, z: -16 }
+    ];
+    
+    for (let i = 0; i < HOUSE_SLOTS.length; i++) {
+        let hSeed = (Math.sin(vCX + vCZ + i * 57.1) * 43758.5453) % 1;
+        if (Math.abs(hSeed) > 0.8 && i > 4) continue;
+
+        let hX = vCX + HOUSE_SLOTS[i].x;
+        let hZ = vCZ + HOUSE_SLOTS[i].z;
+        let dxH = wx - hX;
+        let dzH = wz - hZ;
+        const H_RADIUS = 3;
+
+        if (Math.abs(dxH) <= H_RADIUS && Math.abs(dzH) <= H_RADIUS) {
+            return { type: 'house', originX: hX, originZ: hZ, surfaceY: sY, influence: 1.0, id: i };
+        }
+        
+        let isPath = false;
+        if (HOUSE_SLOTS[i].z === 0 && Math.abs(dzV) <= 1.2 && Math.sign(dxV) === Math.sign(HOUSE_SLOTS[i].x) && Math.abs(dxV) < Math.abs(HOUSE_SLOTS[i].x)) isPath = true;
+        if (HOUSE_SLOTS[i].x === 0 && Math.abs(dxV) <= 1.2 && Math.sign(dzV) === Math.sign(HOUSE_SLOTS[i].z) && Math.abs(dzV) < Math.abs(HOUSE_SLOTS[i].z)) isPath = true;
+        if (HOUSE_SLOTS[i].x !== 0 && HOUSE_SLOTS[i].z !== 0) {
+             if (Math.abs(dxV - dzV * (HOUSE_SLOTS[i].x / HOUSE_SLOTS[i].z)) < 2.0 && Math.abs(dxV) < Math.abs(HOUSE_SLOTS[i].x) && Math.sign(dxV) === Math.sign(HOUSE_SLOTS[i].x)) isPath = true;
+        }
+        if (isPath) return { type: 'path', surfaceY: sY, influence: 1.0 };
+    }
+
+    return { type: 'plateau', surfaceY: sY, influence: influence };
+}
+
 export class Chunk {
     constructor(chunkX, chunkZ, scene, materialArray) {
         this.chunkX = chunkX;
@@ -37,25 +131,20 @@ export class Chunk {
         return this.data[this.getIndex(x, y, z)];
     }
     
-    // Helper: compute surface Y and tree spawn info for ANY world position (cross-chunk safe)
+    // Helper: compute tree spawn info for ANY world position (cross-chunk safe)
     getTreeInfoAtWorld(wx, wz) {
         const WATER_LEVEL = 58;
         const TREE_GRID = 7;
 
-        let baseElev = fbm2D(wx * 0.002, wz * 0.002, 4, 0.5);
+        let surfaceY = getWorldSurfaceY(wx, wz);
+
+        // --- BLOCK TREES IN VILLAGE ZONES ---
+        let vPart = getVillagePartAtWorld(wx, wz);
+        if (vPart) return null;
+
         let temp     = fbm2D(wx * 0.004 + 100, wz * 0.004 + 100);
         let moist    = fbm2D(wx * 0.004 - 100, wz * 0.004 - 100);
-        let baseHeight = 40 + baseElev * 32;
-        let mountainBoost = 0;
-        if (baseElev > 0.55) {
-            mountainBoost = Math.pow((baseElev - 0.55) * 2.2, 2.5) * 90;
-        }
-        let detailNoise = fbm2D(wx*0.01, wz*0.01) * 5;
-        if (baseElev > 0.55) detailNoise *= 1.0 + (baseElev - 0.55)*8;
-        let dist = Math.sqrt(wx*wx + wz*wz);
-        if (dist < 20) { baseElev = Math.min(baseElev, 0.50); mountainBoost = 0; }
-        let surfaceY = Math.floor(baseHeight + mountainBoost + detailNoise);
-
+        
         let isOcean    = surfaceY <= WATER_LEVEL - 4;
         let isMountain = surfaceY > 75;
         let isDesert   = !isOcean && !isMountain && temp > 0.6 && moist < 0.5;
@@ -83,42 +172,116 @@ export class Chunk {
         const WATER_LEVEL = 58;
         const TREE_GRID = 7;
         
-        // ---- PASS 1: Terrain + Trunks ----
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 let wx = worldXOffset + x;
                 let wz = worldZOffset + z;
                 
-                let baseElev = fbm2D(wx * 0.002, wz * 0.002, 4, 0.5);
-                let temp = fbm2D(wx * 0.004 + 100, wz * 0.004 + 100);
-                let moist = fbm2D(wx * 0.004 - 100, wz * 0.004 - 100);
-                let baseHeight = 40 + baseElev * 32;
-                let mountainBoost = 0;
-                if (baseElev > 0.55) {
-                    mountainBoost = Math.pow((baseElev - 0.55) * 2.2, 2.5) * 90;
-                }
-                let detailNoise = fbm2D(wx*0.01, wz*0.01) * 5;
-                if (baseElev > 0.55) detailNoise *= 1.0 + (baseElev - 0.55)*8;
+                let surfaceY = getWorldSurfaceY(wx, wz);
 
-                // Flat spawn zone
-                let distFromOrigin = Math.sqrt(wx*wx + wz*wz);
-                if (distFromOrigin < 20) {
-                    baseElev = Math.min(baseElev, 0.50);
-                    mountainBoost = 0;
-                }
-                let surfaceY = Math.floor(baseHeight + mountainBoost + detailNoise);
-
-                let isOcean    = surfaceY <= WATER_LEVEL - 4;
-                let isMountain = surfaceY > 75;
-                let isDesert   = !isOcean && !isMountain && temp > 0.6 && moist < 0.5;
-                let isPlains   = !isOcean && !isMountain && !isDesert && moist < 0.4;
+                // Village check
+                let vPart = getVillagePartAtWorld(wx, wz);
 
                 // Terrain blocks
                 for (let y = 0; y < CHUNK_HEIGHT; y++) {
                     let idx = this.getIndex(x, y, z);
+                    let isVillageBlock = false;
+                    
+                    if (vPart) {
+                        let targetY = vPart.surfaceY;
+                        let influence = vPart.influence || 1.0;
+                        
+                        // Weighted blending of surface height
+                        let blendedY = Math.round(surfaceY * (1 - influence) + targetY * influence);
+                        
+                        // Village only affects a vertical slice around targetY
+                        if (y >= targetY - 10 && y <= targetY + 12) {
+                            if (y < blendedY) {
+                                // Fill grounding
+                                this.data[idx] = BLOCKS.DIRT;
+                                isVillageBlock = true;
+                            } else if (y === blendedY) {
+                                // Grass floor (always grass on top of village/transition)
+                                this.data[idx] = BLOCKS.GRASS;
+                                isVillageBlock = true;
+                            } else if (y > blendedY) {
+                                // Clear air space
+                                this.data[idx] = BLOCKS.AIR;
+                                isVillageBlock = true;
+                            }
+
+                            // Overwrite with structures (houses, well, paths)
+                            if (vPart.type === 'house') {
+                                let relX = wx - vPart.originX;
+                                let relZ = wz - vPart.originZ;
+                                let relY = y - targetY;
+                                let isInFootprint = Math.abs(relX) <= 3 && Math.abs(relZ) <= 3;
+                                if (isInFootprint) {
+                                    let isWall = Math.abs(relX) === 3 || Math.abs(relZ) === 3;
+                                    let isCorner = Math.abs(relX) === 3 && Math.abs(relZ) === 3;
+                                    if (relY === 0) this.data[idx] = isCorner ? BLOCKS.WOOD : BLOCKS.PLANKS;
+                                    else if (relY > 0 && relY <= 3) {
+                                        if (isCorner) this.data[idx] = BLOCKS.WOOD;
+                                        else if (isWall) {
+                                            if (relX === 0 && relZ === 3 && (relY === 1 || relY === 2)) this.data[idx] = BLOCKS.AIR;
+                                            else if (relY === 2 && (Math.abs(relX) === 1 || Math.abs(relZ) === 1)) this.data[idx] = BLOCKS.GLASS;
+                                            else this.data[idx] = BLOCKS.PLANKS;
+                                        } else {
+                                            if (relY === 1) {
+                                                if (relX === 2 && relZ === -2) this.data[idx] = BLOCKS.WORKBENCH;
+                                                else if (relX === -2 && relZ === -2) this.data[idx] = BLOCKS.CHEST;
+                                                else if (relX === 0 && relZ === -2) this.data[idx] = BLOCKS.FURNACE;
+                                                else this.data[idx] = BLOCKS.AIR;
+                                            } else this.data[idx] = BLOCKS.AIR;
+                                        }
+                                    } else if (relY >= 4 && relY <= 6) {
+                                        let roofRadius = 4 - (relY - 4);
+                                        if (Math.abs(relX) <= roofRadius && Math.abs(relZ) <= roofRadius) {
+                                            let isRoofEdge = Math.abs(relX) === roofRadius || Math.abs(relZ) === roofRadius;
+                                            this.data[idx] = isRoofEdge ? BLOCKS.WOOD : BLOCKS.PLANKS;
+                                        }
+                                    } else if (relY < 0) this.data[idx] = BLOCKS.STONE_BRICK;
+                                    isVillageBlock = true;
+                                }
+                            } else if (vPart.type === 'well') {
+                                 let relX = wx - vPart.vCX;
+                                 let relZ = wz - vPart.vCZ;
+                                 let relY = y - targetY;
+                                 if (relY === 1) {
+                                     if (Math.abs(relX) <= 1 && Math.abs(relZ) <= 1) this.data[idx] = BLOCKS.WATER;
+                                     else if (Math.abs(relX) <= 2 && Math.abs(relZ) <= 2) this.data[idx] = BLOCKS.STONE_BRICK;
+                                 } else if (relY <= 0 && relY >= -4) {
+                                     let isInner = Math.abs(relX) <= 1 && Math.abs(relZ) <= 1;
+                                     if (isInner) this.data[idx] = BLOCKS.WATER;
+                                     else if (Math.abs(relX) <= 2 && Math.abs(relZ) <= 2) this.data[idx] = BLOCKS.STONE_BRICK;
+                                 } else if (relY >= 2 && relY <= 3) {
+                                     if (Math.abs(relX) === 2 && Math.abs(relZ) === 2) this.data[idx] = BLOCKS.WOOD;
+                                     else this.data[idx] = BLOCKS.AIR;
+                                 } else if (relY === 4) {
+                                     if (Math.abs(relX) <= 2 && Math.abs(relZ) <= 2) this.data[idx] = BLOCKS.PLANKS;
+                                     else this.data[idx] = BLOCKS.AIR;
+                                 }
+                            } else if (vPart.type === 'path') {
+                                 let relY = y - targetY;
+                                 if (relY === 0) this.data[idx] = BLOCKS.DIRT;
+                                 else if (relY > 0 && relY <= 3) this.data[idx] = BLOCKS.AIR;
+                                 else if (relY < 0) this.data[idx] = BLOCKS.DIRT;
+                            } else if (vPart.type === 'plateau') {
+                                 // Already handled by the default plateau logic above
+                                 // Just keeping the condition for clarity
+                            }
+                        }
+                    }
+                    if (isVillageBlock) continue;
+
                     if (y > surfaceY) {
                         this.data[idx] = y <= WATER_LEVEL ? BLOCKS.WATER : BLOCKS.AIR;
                     } else if (y === surfaceY) {
+                        let temp = fbm2D(wx * 0.004 + 100, wz * 0.004 + 100);
+                        let moist = fbm2D(wx * 0.004 - 100, wz * 0.004 - 100);
+                        let isDesert   = surfaceY > WATER_LEVEL && temp > 0.6 && moist < 0.5;
+                        let isMountain = surfaceY > 75;
+
                         if (isDesert || (surfaceY <= WATER_LEVEL + 2 && !isMountain)) {
                             this.data[idx] = BLOCKS.SAND;
                         } else if (isMountain) {
@@ -127,6 +290,12 @@ export class Chunk {
                             this.data[idx] = BLOCKS.GRASS;
                         }
                     } else if (y > surfaceY - 4) {
+                        let temp = fbm2D(wx * 0.004 + 100, wz * 0.004 + 100);
+                        let moist = fbm2D(wx * 0.004 - 100, wz * 0.004 - 100);
+                        let isOcean    = surfaceY <= WATER_LEVEL - 4;
+                        let isDesert   = surfaceY > WATER_LEVEL && temp > 0.6 && moist < 0.5;
+                        let isMountain = surfaceY > 75;
+
                         let isClay = false;
                         if (!isDesert && !isOcean && !isMountain) {
                             let depth = surfaceY - y;
@@ -148,7 +317,13 @@ export class Chunk {
                 }
 
                 // Tree trunk placement (only for the grid candidate position)
-                if (surfaceY >= WATER_LEVEL) {
+                if (surfaceY >= WATER_LEVEL && !vPart) {
+                    let temp = fbm2D(wx * 0.004 + 100, wz * 0.004 + 100);
+                    let moist = fbm2D(wx * 0.004 - 100, wz * 0.004 - 100);
+                    let isOcean    = surfaceY <= WATER_LEVEL - 4;
+                    let isMountain = surfaceY > 75;
+                    let isDesert   = !isMountain && temp > 0.6 && moist < 0.5;
+
                     let cellX = Math.floor(wx / TREE_GRID);
                     let cellZ = Math.floor(wz / TREE_GRID);
                     let h1 = Math.sin(cellX * 127.1 + cellZ * 311.7) * 43758.5453; h1 -= Math.floor(h1);
@@ -208,6 +383,9 @@ export class Chunk {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 let wx = worldXOffset + x;
                 let wz = worldZOffset + z;
+
+                // --- BLOCK LEAVES IN VILLAGE ZONES ---
+                if (getVillagePartAtWorld(wx, wz)) continue;
 
                 // Find grid cells whose candidate could have a canopy over (wx,wz)
                 let cMinX = Math.floor((wx - LEAF_H_RADIUS) / TREE_GRID);

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { BLOCKS, materials, generateMaterials, icons } from './textures.js';
-import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './chunk.js';
+import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT, getWorldSurfaceY, getVillageSeed, VILLAGE_GRID } from './chunk.js';
 import { Mob, mobsList } from './mobs.js';
 import { setSeed, fbm2D } from './math.js';
 
@@ -1082,8 +1082,43 @@ function init() {
         } else if (c === '/winter') {
             gameTime = (3 * 10) * Math.PI * 2 + (Math.PI / 4);
             addChatMessage("A cold wind blows. Winter has come.");
+        } else if (c === '/tpvillage') {
+            // Scan nearby grid for a village
+            let px = Math.floor(camera.position.x / VILLAGE_GRID);
+            let pz = Math.floor(camera.position.z / VILLAGE_GRID);
+            let found = false;
+            
+            searchIdx:
+            for (let r = 0; r < 20; r++) { // Scan 20x20 village cells
+                for (let dx = -r; dx <= r; dx++) {
+                    for (let dz = -r; dz <= r; dz++) {
+                        if (Math.abs(dx) !== r && Math.abs(dz) !== r && r > 0) continue; 
+                        let cx = px + dx;
+                        let cz = pz + dz;
+                        let seed = getVillageSeed(cx, cz);
+                        if (seed <= 0.20) {
+                            // Check flatness approx
+                            let vCX = cx * VILLAGE_GRID + 30 + Math.floor(seed * (VILLAGE_GRID - 60));
+                            let vCZ = cz * VILLAGE_GRID + 30 + Math.floor(((seed * 321.4) % 1) * (VILLAGE_GRID - 60));
+                            let sY = getWorldSurfaceY(vCX, vCZ);
+                            if (sY >= 60 && sY <= 90) {
+                                // Double check corners briefly
+                                let h1 = getWorldSurfaceY(vCX + 18, vCZ + 18);
+                                let h2 = getWorldSurfaceY(vCX - 18, vCZ - 18);
+                                if (Math.abs(h1 - sY) < 6 && Math.abs(h2 - sY) < 6) {
+                                    camera.position.set(vCX + 5, sY + 2, vCZ + 5);
+                                    addChatMessage(`Teleported to village at ${vCX}, ${vCZ}`);
+                                    found = true;
+                                    break searchIdx;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (!found) addChatMessage("No village found in nearby area.");
         } else if (c === '/help') {
-            addChatMessage("Commands: /day, /night, /sunrise, /sunset, /rain, /storm, /spring, /summer, /autumn, /winter, /help");
+            addChatMessage("Commands: /day, /night, /sunrise, /sunset, /rain, /storm, /spring, /summer, /autumn, /winter, /tpvillage, /help");
         } else if (c.startsWith('/')) {
             addChatMessage("Unknown command. Type /help for list.");
         }
@@ -1839,14 +1874,26 @@ function animate() {
         }
     }
 
-    // Weather (Increase snow/rain chance in winter)
+    // Weather (Rarely change weather)
     updateRain(delta, camera.position, isSheltered);
-    let weatherChance = (currentSeason === SEASONS.WINTER) ? 0.15 : 0.05; 
-    if (time - lastWeatherChange > 30000) {
+    // Lower probability: 2% in summer, 8% in winter
+    let weatherChance = (currentSeason === SEASONS.WINTER) ? 0.08 : 0.02; 
+    if (time - lastWeatherChange > 60000) { // Check every minute
         let rolled = Math.random();
         if (rolled < weatherChance) { 
-            if (!isRaining) { isRaining = true; isStorming = Math.random() < 0.3; }
-            else { isRaining = false; isStorming = false; }
+            // If it's raining, 2-8% chance to STOP. 
+            // If it's NOT raining, we only start if the roll is even lower (0.5% - 2% chance to START)
+            let startChance = weatherChance * 0.25; 
+            if (!isRaining) { 
+                if (rolled < startChance) {
+                    isRaining = true; 
+                    isStorming = Math.random() < 0.3; 
+                }
+            } else { 
+                // Always stop if we hit the toggle roll while raining
+                isRaining = false; 
+                isStorming = false; 
+            }
             if (isRaining) initRainAudio();
         }
         lastWeatherChange = time;
