@@ -32,7 +32,15 @@ let craftingMode = 'none'; // 'none', 'basic', 'workbench', 'chest'
 let isChatOpen = false;
 
 // ----------------- INVENTORY & CRAFTING -----------------
-const BLOCK_NAMES = {1:'Grass', 2:'Dirt', 3:'Stone', 4:'Wood', 5:'Leaves', 6:'Sand', 7:'Planks', 8:'Meat', 9:'Workbench', 10:'Chest', 11:'Water', 12:'Cactus', 13:'Red Flower', 14:'Yellow Flower', 15:'Tall Grass', 16:'Brick', 17:'Stone Brick', 18:'Clay', 19:'Glass', 20:'Furnace'};
+const BLOCK_NAMES = {
+    1:'Grass', 2:'Dirt', 3:'Stone', 4:'Wood', 5:'Leaves', 6:'Sand', 7:'Planks', 8:'Meat',
+    9:'Workbench', 10:'Chest', 11:'Water', 12:'Cactus', 13:'Red Flower', 14:'Yellow Flower',
+    15:'Tall Grass', 16:'Brick', 17:'Stone Brick', 18:'Clay', 19:'Glass', 20:'Furnace',
+    22:'Tilled Soil',
+    23:'Wheat', 24:'Oats', 25:'Tomato', 26:'Carrot', 27:'Potato',
+    28:'Wheat Seeds', 29:'Oat Seeds', 30:'Tomato Seeds',
+    50:'Hoe'
+};
 
 class Inventory {
     constructor() {
@@ -442,6 +450,29 @@ function updateCraftingUI() {
     addRecipe(BLOCKS.PLANKS, 4, BLOCKS.WOOD, 1);
     addRecipe(BLOCKS.WORKBENCH, 1, BLOCKS.PLANKS, 4);
 
+    // Hoe Recipe (2 Planks + 2 Sticks — sticks come from wood/planks)
+    // Simplified: requires 2 planks. Sticks are abstracted.
+    (() => {
+        const outId = BLOCKS.HOE;
+        const reqId = BLOCKS.PLANKS;
+        const reqCount = 2;
+        let btn = document.createElement('button');
+        let hasIngredients = inventory.countItem(reqId) >= reqCount;
+        let hasSpace = inventory.canAcceptItem(outId);
+        btn.innerHTML = `<span>${!hasSpace ? '<span style="color:#f55;font-size:11px;">[Inv Full] </span>' : ''}Craft 1x <img src="${icons[outId]}" class="block-icon"></span> <span>Req: ${reqCount}x <img src="${icons[reqId]}" class="block-icon"> (Planks)</span>`;
+        btn.disabled = !hasIngredients || !hasSpace;
+        btn.onclick = () => {
+            if (!inventory.canAcceptItem(outId)) return;
+            if (inventory.removeItem(reqId, reqCount)) {
+                inventory.addItem(outId, 1);
+                updateInventoryUI();
+                updateCraftingUI();
+                playSound(400, 0.1);
+            }
+        };
+        list.appendChild(btn);
+    })();
+
     // Advanced Recipes (Needs Workbench)
     if (craftingMode === 'workbench') {
         let hdr = document.createElement('div');
@@ -462,6 +493,10 @@ let currentChestKey = null;
 
 function saveChests() {
     localStorage.setItem('sandbox3d_chests', JSON.stringify(window.chests));
+}
+
+function saveCropGrowth() {
+    localStorage.setItem('sandbox3d_crops', JSON.stringify(window.cropGrowth));
 }
 
 // ----------------- FURNACE UI -----------------
@@ -901,7 +936,8 @@ function init() {
     dirLight.shadow.camera.right = 120;
     dirLight.shadow.camera.top = 120;
     dirLight.shadow.camera.bottom = -120;
-    dirLight.shadow.bias = -0.0001; // Closer bias to avoid floating shadows
+    dirLight.shadow.bias = -0.001; // Increased bias to avoid floating shadows
+    dirLight.shadow.normalBias = 0.05; // Fixes chunk border shadow acne
     
     scene.add(dirLight);
     
@@ -1220,6 +1256,131 @@ function init() {
         return null;
     }
 
+    // Spawn physical drop item
+    function spawnDrop(blockId, count, x, y, z) {
+        if (!icons[blockId]) return;
+        
+        let group = new THREE.Group();
+        group.position.set(x + Math.random() * 0.5 + 0.25, y + 0.5, z + Math.random() * 0.5 + 0.25);
+        
+        if (!window.dropMaterials) window.dropMaterials = {};
+        if (!dropMaterials[blockId]) {
+            let img = new Image();
+            img.src = icons[blockId];
+            let tex = new THREE.Texture(img);
+            img.onload = () => tex.needsUpdate = true;
+            tex.magFilter = THREE.NearestFilter;
+            tex.colorSpace = THREE.SRGBColorSpace;
+            dropMaterials[blockId] = new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.5 });
+        }
+        
+        let sprite = new THREE.Sprite(dropMaterials[blockId]);
+        sprite.scale.set(0.4, 0.4, 0.4);
+        group.add(sprite);
+        scene.add(group);
+        
+        if (!window.droppedItems) window.droppedItems = [];
+        window.droppedItems.push({
+            mesh: group,
+            id: blockId,
+            count: count,
+            vx: (Math.random() - 0.5) * 4,
+            vy: 2 + Math.random() * 2,
+            vz: (Math.random() - 0.5) * 4,
+            tick: 0
+        });
+    }
+
+    // Handles block breaking logic recursively
+    function handleBlockBreak(tx, ty, tz, blockId) {
+        if (blockId === BLOCKS.AIR || blockId === BLOCKS.WATER) return;
+
+        // Check if there's a plant above that needs to break first
+        let aboveId = getBlockGlobal(tx, ty + 1, tz);
+        if ((aboveId >= 13 && aboveId <= 15) || (aboveId >= 23 && aboveId <= 27)) {
+            handleBlockBreak(tx, ty + 1, tz, aboveId); // recurse
+        }
+
+        let replacement = BLOCKS.AIR;
+        if (ty <= 58) {
+            // Check neighbors; if any is water, fill this hole with water
+            let u = getBlockGlobal(tx, ty + 1, tz);
+            let l = getBlockGlobal(tx - 1, ty, tz);
+            let r = getBlockGlobal(tx + 1, ty, tz);
+            let f = getBlockGlobal(tx, ty, tz + 1);
+            let b = getBlockGlobal(tx, ty, tz - 1);
+            if (u === BLOCKS.WATER || l === BLOCKS.WATER || r === BLOCKS.WATER || f === BLOCKS.WATER || b === BLOCKS.WATER) {
+                replacement = BLOCKS.WATER;
+            }
+        }
+        
+        // --- CROP BREAKING DROPS ---
+        const MATURE_CROPS = [BLOCKS.WHEAT, BLOCKS.OATS, BLOCKS.TOMATO, BLOCKS.CARROT, BLOCKS.POTATO];
+        const CROP_SEED_MAP = {
+            [BLOCKS.WHEAT]:   { fruit: BLOCKS.WHEAT,   seed: BLOCKS.WHEAT_SEED },
+            [BLOCKS.OATS]:    { fruit: BLOCKS.OATS,    seed: BLOCKS.OATS_SEED },
+            [BLOCKS.TOMATO]:  { fruit: BLOCKS.TOMATO,  seed: BLOCKS.TOMATO_SEED },
+            [BLOCKS.CARROT]:  { fruit: BLOCKS.CARROT,  seed: BLOCKS.CARROT }, // carrot IS seed
+            [BLOCKS.POTATO]:  { fruit: BLOCKS.POTATO,  seed: BLOCKS.POTATO }, // potato IS seed
+        };
+
+        if (MATURE_CROPS.includes(blockId)) {
+            let cropKey = `${tx},${ty},${tz}`;
+            let growthData = window.cropGrowth[cropKey];
+            let isMature = !growthData || (growthData.stage !== undefined ? growthData.stage >= 2 : growthData.progress >= 100);
+            setBlockGlobal(tx, ty, tz, replacement);
+            if (window.cropGrowth[cropKey]) {
+                delete window.cropGrowth[cropKey];
+                saveCropGrowth();
+            }
+            if (isMature) {
+                let cropInfo = CROP_SEED_MAP[blockId];
+                spawnDrop(cropInfo.fruit, 2, tx, ty, tz);
+                spawnDrop(cropInfo.seed, 3, tx, ty, tz);
+            } else {
+                let cropInfo = CROP_SEED_MAP[blockId];
+                spawnDrop(cropInfo.seed, 1, tx, ty, tz);
+            }
+            playLeafSound();
+            return;
+        }
+        
+        // --- TILLED SOIL breaking returns dirt ---
+        if (blockId === BLOCKS.TILLED_SOIL) {
+            setBlockGlobal(tx, ty, tz, replacement);
+            spawnDrop(BLOCKS.DIRT, 1, tx, ty, tz);
+            playSound(300, 0.05);
+            return;
+        }
+
+        // Default block break
+        setBlockGlobal(tx, ty, tz, replacement);
+        spawnDrop(blockId, 1, tx, ty, tz);
+        
+        if (blockId === BLOCKS.CHEST) {
+             if(window.chests && window.chests[`${tx},${ty},${tz}`]) {
+                 delete window.chests[`${tx},${ty},${tz}`];
+                 saveChests();
+             }
+        }
+        if (blockId === BLOCKS.FURNACE) {
+            if (window.furnaces && window.furnaces[`${tx},${ty},${tz}`]) {
+                delete window.furnaces[`${tx},${ty},${tz}`];
+                saveFurnaces();
+            }
+            if (window.furnaceOrientations && window.furnaceOrientations[`${tx},${ty},${tz}`]) {
+                delete window.furnaceOrientations[`${tx},${ty},${tz}`];
+                localStorage.setItem('sandbox3d_furnace_orient', JSON.stringify(window.furnaceOrientations));
+            }
+        }
+        
+        if (blockId === BLOCKS.LEAVES || blockId === BLOCKS.GRASS) {
+            playLeafSound();
+        } else {
+            playSound(300, 0.05); // pop
+        }
+    }
+
     const onKeyDown = function (event) {
         if (event.repeat) {
             keys[event.code] = true;
@@ -1497,51 +1658,59 @@ function init() {
             if (e.button === 0) {
                 // Break block
                 let blockId = getBlockGlobal(targetX, targetY, targetZ);
-                if (blockId !== BLOCKS.AIR && blockId !== BLOCKS.WATER) {
-                    let replacement = BLOCKS.AIR;
-                    if (targetY <= 58) {
-                        // Check neighbors; if any is water, fill this hole with water
-                        let u = getBlockGlobal(targetX, targetY + 1, targetZ);
-                        let l = getBlockGlobal(targetX - 1, targetY, targetZ);
-                        let r = getBlockGlobal(targetX + 1, targetY, targetZ);
-                        let f = getBlockGlobal(targetX, targetY, targetZ + 1);
-                        let b = getBlockGlobal(targetX, targetY, targetZ - 1);
-                        if (u === BLOCKS.WATER || l === BLOCKS.WATER || r === BLOCKS.WATER || f === BLOCKS.WATER || b === BLOCKS.WATER) {
-                            replacement = BLOCKS.WATER;
-                        }
-                    }
-                    
-                    setBlockGlobal(targetX, targetY, targetZ, replacement);
-                    inventory.addItem(blockId, 1);
-                    // Standardize drops
-                    if (blockId === BLOCKS.CHEST) {
-                         // drop contents (not implemented fully, will just break for now)
-                         if(window.chests && window.chests[`${targetX},${targetY},${targetZ}`]) {
-                             delete window.chests[`${targetX},${targetY},${targetZ}`];
-                             saveChests();
-                         }
-                    }
-                    if (blockId === BLOCKS.FURNACE) {
-                        if (window.furnaces && window.furnaces[`${targetX},${targetY},${targetZ}`]) {
-                            delete window.furnaces[`${targetX},${targetY},${targetZ}`];
-                            saveFurnaces();
-                        }
-                        if (window.furnaceOrientations && window.furnaceOrientations[`${targetX},${targetY},${targetZ}`]) {
-                            delete window.furnaceOrientations[`${targetX},${targetY},${targetZ}`];
-                            localStorage.setItem('sandbox3d_furnace_orient', JSON.stringify(window.furnaceOrientations));
-                        }
-                    }
-                    updateInventoryUI();
-                    if (blockId === BLOCKS.LEAVES || blockId === BLOCKS.GRASS) {
-                        playLeafSound();
-                    } else {
-                        playSound(300, 0.05); // pop
-                    }
-                }
+                handleBlockBreak(targetX, targetY, targetZ, blockId);
             } else if (e.button === 2) {
+            // The block break logic has been moved to handleBlockBreak
+
                 // Interact with block
                 let targetBlockId = getBlockGlobal(targetX, targetY, targetZ);
                 
+                // --- HOE: Till grass/dirt into tilled soil ---
+                let heldItem = inventory.slots[inventory.activeSlot];
+                if (heldItem && heldItem.id === BLOCKS.HOE) {
+                    if (targetBlockId === BLOCKS.GRASS || targetBlockId === BLOCKS.DIRT) {
+                        // Check block above is air (can't till under something)
+                        let above = getBlockGlobal(targetX, targetY + 1, targetZ);
+                        if (above === BLOCKS.AIR) {
+                            setBlockGlobal(targetX, targetY, targetZ, BLOCKS.TILLED_SOIL);
+                            playSound(350, 0.08);
+                        }
+                    }
+                    return;
+                }
+
+                // --- SEEDS: Plant on tilled soil ---
+                const SEED_TO_CROP = {
+                    [BLOCKS.WHEAT_SEED]:  BLOCKS.WHEAT,
+                    [BLOCKS.OATS_SEED]:   BLOCKS.OATS,
+                    [BLOCKS.TOMATO_SEED]: BLOCKS.TOMATO,
+                    [BLOCKS.CARROT]:      BLOCKS.CARROT,
+                    [BLOCKS.POTATO]:      BLOCKS.POTATO,
+                };
+                if (heldItem && SEED_TO_CROP[heldItem.id] !== undefined) {
+                    if (targetBlockId === BLOCKS.TILLED_SOIL) {
+                        // Check block above tilled soil is air
+                        let aboveTilled = getBlockGlobal(targetX, targetY + 1, targetZ);
+                        if (aboveTilled === BLOCKS.AIR) {
+                            let cropId = SEED_TO_CROP[heldItem.id];
+                            // Place seedling block (starts as a tiny seedling)
+                            setBlockGlobal(targetX, targetY + 1, targetZ, cropId);
+                            // Track growth: progress 0-100, stage 0=seedling 1=young 2=mature
+                            let cropKey = `${targetX},${targetY + 1},${targetZ}`;
+                            window.cropGrowth[cropKey] = { progress: 0, stage: 0, cropId };
+                            saveCropGrowth();
+                            // Rebuild chunk so seedling renders at correct scale immediately
+                            let cx = Math.floor(targetX / 16);
+                            let cz = Math.floor((targetZ) / 16);
+                            if (chunks[`${cx},${cz}`]) chunks[`${cx},${cz}`].buildMesh();
+                            inventory.useActiveItem();
+                            updateInventoryUI();
+                            playLeafSound();
+                        }
+                    }
+                    return;
+                }
+
                 if (targetBlockId === BLOCKS.WORKBENCH) {
                      craftingMode = 'workbench';
                      craftingMenu.style.display = 'block';
@@ -1566,6 +1735,12 @@ function init() {
                 // Place block
                 let slot = inventory.slots[inventory.activeSlot];
                 if (!slot || slot.count <= 0) return;
+
+                // Don't place non-placeable items (hoe, seeds, mature crops)
+                // Mature crops (23-27) can't be placed directly — prevents harvest duplication exploit
+                const NON_PLACEABLE = [BLOCKS.HOE, BLOCKS.WHEAT_SEED, BLOCKS.OATS_SEED, BLOCKS.TOMATO_SEED,
+                    BLOCKS.WHEAT, BLOCKS.OATS, BLOCKS.TOMATO, BLOCKS.CARROT, BLOCKS.POTATO];
+                if (NON_PLACEABLE.includes(slot.id)) return;
                 
                 let bx = Math.floor(point.x + normal.x * 0.5);
                 let by = Math.floor(point.y + normal.y * 0.5);
@@ -1745,8 +1920,11 @@ function checkAABB(px, py, pz) {
         for (let y = startY; y <= endY; y++) {
             for (let z = startZ; z <= endZ; z++) {
                 let blockId = getBlockGlobal(x, y, z);
-                // Ignore AIR, WATER, and all FLORA (Flowers/Grass IDs 13-15)
-                if (blockId !== BLOCKS.AIR && blockId !== BLOCKS.WATER && !(blockId >= 13 && blockId <= 15)) return true;
+                // Ignore AIR, WATER, FLORA (13-15), CROPS (23-27)
+                // NOTE: TILLED_SOIL has full collision so player doesn't fall through
+                if (blockId !== BLOCKS.AIR && blockId !== BLOCKS.WATER
+                    && !(blockId >= 13 && blockId <= 15)
+                    && !(blockId >= 23 && blockId <= 27)) return true;
             }
         }
     }
@@ -2153,6 +2331,36 @@ function animate() {
     updateDynamicSpawning();
     }
 
+    // --- CROP GROWTH TICK (every 10 real seconds) ---
+    // Stage 0 (seedling) → Stage 1 (young): progress 0→33 (10 ticks = ~1.7 min)
+    // Stage 1 (young)    → Stage 2 (mature): progress 33→66 (10 more ticks)
+    // Stage 2 (mature)   fully grown:         progress 66→100 (10 more ticks)
+    // Total: 30 ticks = ~5 minutes real time
+    _cropGrowthTimer += delta;
+    if (_cropGrowthTimer >= 10.0) {
+        _cropGrowthTimer -= 10.0;
+        let cropChanged = false;
+        for (let key in window.cropGrowth) {
+            let entry = window.cropGrowth[key];
+            if (entry.progress < 100) {
+                let oldStage = entry.stage || 0;
+                entry.progress = Math.min(100, entry.progress + 3.34);
+                // Derive stage from progress: 0-33 seedling, 33-66 young, 66+ mature
+                let newStage = entry.progress >= 66 ? 2 : (entry.progress >= 33 ? 1 : 0);
+                entry.stage = newStage;
+                cropChanged = true;
+                // If stage changed, rebuild chunk so mesh updates immediately
+                if (newStage !== oldStage) {
+                    let parts = key.split(',');
+                    let bx = parseInt(parts[0]), bz = parseInt(parts[2]);
+                    let cx = Math.floor(bx / 16), cz = Math.floor(bz / 16);
+                    if (chunks[`${cx},${cz}`]) chunks[`${cx},${cz}`].buildMesh();
+                }
+            }
+        }
+        if (cropChanged) saveCropGrowth();
+    }
+
     // --- PLAYER INPUT & INTERACTION (Only if locked) ---
     if (controls.isLocked === true && !isChatOpen) {
         // Block looking feedback
@@ -2163,8 +2371,97 @@ function animate() {
             let p = intersects[0].point;
             if (intersects[0].face) {
                 let n = intersects[0].face.normal;
-                let tid = getBlockGlobal(Math.floor(p.x - n.x * 0.1), Math.floor(p.y - n.y * 0.1), Math.floor(p.z - n.z * 0.1));
-                document.getElementById('debug-text').innerText = tid !== BLOCKS.AIR ? `Looking at: ${BLOCK_NAMES[tid]}` : "";
+                let tx = Math.floor(p.x - n.x * 0.1);
+                let ty = Math.floor(p.y - n.y * 0.1);
+                let tz = Math.floor(p.z - n.z * 0.1);
+                let tid = getBlockGlobal(tx, ty, tz);
+                // --- CROP GROWTH TOOLTIP ---
+                const CROP_IDS = [BLOCKS.WHEAT, BLOCKS.OATS, BLOCKS.TOMATO, BLOCKS.CARROT, BLOCKS.POTATO];
+                if (CROP_IDS.includes(tid)) {
+                    let cropKey = `${tx},${ty},${tz}`;
+                    let growData = window.cropGrowth[cropKey];
+                    if (growData && growData.progress < 100) {
+                        let stageNames = ['насінина 🌱', 'молоде 🌿', 'дозріває 🌾'];
+                        let stageName = stageNames[growData.stage || 0];
+                        // Seconds per 3.34 progress = 10s, so remaining = (100 - progress) / 3.34 * 10
+                        let secRemaining = Math.ceil((100 - growData.progress) / 3.34) * 10;
+                        let mins = Math.floor(secRemaining / 60);
+                        let secs = secRemaining % 60;
+                        let timeStr = mins > 0 ? `${mins}хв ${secs}с` : `${secs}с`;
+                        document.getElementById('debug-text').innerText =
+                            `${BLOCK_NAMES[tid]} [${stageName}] — залишилось: ${timeStr}`;
+                    } else if (growData && growData.progress >= 100) {
+                        document.getElementById('debug-text').innerText =
+                            `${BLOCK_NAMES[tid]} [зріле ✅] — готово до збору!`;
+                    } else {
+                        document.getElementById('debug-text').innerText = `${BLOCK_NAMES[tid]} [зріле ✅]`;
+                    }
+                } else {
+                    document.getElementById('debug-text').innerText = tid !== BLOCKS.AIR ? `Looking at: ${BLOCK_NAMES[tid]}` : "";
+                }
+            }
+        }
+
+        // --- DROPPED ITEMS PHYSICS & PICKUP ---
+        if (window.droppedItems) {
+            for (let i = droppedItems.length - 1; i >= 0; i--) {
+                let drop = droppedItems[i];
+                if (!drop.mesh) continue;
+                
+                // Physics processing
+                drop.vy -= 10.0 * delta; // Gravity
+                drop.mesh.position.x += drop.vx * delta;
+                drop.mesh.position.y += drop.vy * delta;
+                drop.mesh.position.z += drop.vz * delta;
+                
+                // Floor collision (simple center check)
+                let dropBx = Math.floor(drop.mesh.position.x);
+                let dropBy = Math.floor(drop.mesh.position.y - 0.2); // slight offset for sprite
+                let dropBz = Math.floor(drop.mesh.position.z);
+                let dropFloorId = getBlockGlobal(dropBx, dropBy, dropBz);
+                
+                // If it's hitting a solid block (not AIR, WATER, FLORA, CROPS)
+                const isSolid = dropFloorId !== BLOCKS.AIR && dropFloorId !== BLOCKS.WATER 
+                    && !(dropFloorId >= 13 && dropFloorId <= 15) && !(dropFloorId >= 23 && dropFloorId <= 27);
+                
+                if (isSolid) {
+                    drop.mesh.position.y = dropBy + 1.2; // sit fully on top of block
+                    drop.vy = 0;
+                    drop.vx *= Math.max(0, 1.0 - 5.0 * delta); // friction
+                    drop.vz *= Math.max(0, 1.0 - 5.0 * delta); // friction
+                }
+                
+                drop.tick += delta;
+                
+                // Hover animation
+                let hoverOffset = Math.sin(drop.tick * 3) * 0.1;
+                // Since sprite always faces camera, we don't need to rotate it visually
+                // Only bob it up and down slightly if it's resting
+                if (isSolid) drop.mesh.position.y += hoverOffset * delta;
+                
+                // Pickup check
+                let dx = camera.position.x - drop.mesh.position.x;
+                let dy = camera.position.y - 0.5 - drop.mesh.position.y; // player body center
+                let dz = camera.position.z - drop.mesh.position.z;
+                let distSq = dx*dx + dy*dy + dz*dz;
+                
+                if (distSq < 4.0) { // attract within 2 blocks
+                    let dist = Math.sqrt(distSq);
+                    if (dist < 1.0) {
+                        // Picked up!
+                        inventory.addItem(drop.id, drop.count);
+                        updateInventoryUI();
+                        playSound(300, 0.05); // pop sound
+                        scene.remove(drop.mesh);
+                        droppedItems.splice(i, 1);
+                    } else {
+                        // Attract to player
+                        let attractSpeed = 5.0 * delta;
+                        drop.vx = (dx / dist) * attractSpeed * 30; // override velocity
+                        drop.vy = (dy / dist) * attractSpeed * 30;
+                        drop.vz = (dz / dist) * attractSpeed * 30;
+                    }
+                }
             }
         }
 
@@ -2243,8 +2540,11 @@ function animate() {
 
 window.modifiedBlocks = {};
 window.furnaceOrientations = {};
+// cropGrowth: key = "wx,wy,wz" -> { progress: 0..100, cropId } (planted seeds growing)
+window.cropGrowth = {};
 let currentSeed = 1337;
 let _posSaveTimer = 3.0;
+let _cropGrowthTimer = 0; // accumulates time, ticks every 10 seconds
 
 document.addEventListener('DOMContentLoaded', () => {
     let savedSeed = localStorage.getItem('sandbox3d_seed');
@@ -2276,6 +2576,9 @@ document.addEventListener('DOMContentLoaded', () => {
         lastFurnaceTickTime = Date.now();
         saveFurnaces();
         localStorage.setItem('sandbox3d_furnace_orient', JSON.stringify({}));
+        
+        window.cropGrowth = {};
+        localStorage.setItem('sandbox3d_crops', JSON.stringify({}));
         
         localStorage.removeItem('sandbox3d_pos'); // reset spawn position
         
@@ -2323,6 +2626,25 @@ document.addEventListener('DOMContentLoaded', () => {
         let savedInv = localStorage.getItem('sandbox3d_inventory');
         if(savedInv) {
              inventory.slots = JSON.parse(savedInv);
+        }
+
+        let cropData = localStorage.getItem('sandbox3d_crops');
+        if (cropData) {
+            window.cropGrowth = JSON.parse(cropData);
+            // Fast-forward offline growth (10s per tick, max 30 days offline = 259200 ticks)
+            let offlineSec = Math.min((Date.now() - (parseInt(localStorage.getItem('sandbox3d_lastSave')) || Date.now())) / 1000, 259200);
+            let offlineTicks = Math.floor(offlineSec / 10);
+            if (offlineTicks > 0) {
+                for (let key in window.cropGrowth) {
+                    let entry = window.cropGrowth[key];
+                    entry.progress = Math.min(100, entry.progress + offlineTicks * 3.34);
+                    // Recalculate stage from updated progress
+                    entry.stage = entry.progress >= 66 ? 2 : (entry.progress >= 33 ? 1 : 0);
+                }
+                saveCropGrowth();
+            }
+        } else {
+            window.cropGrowth = {};
         }
 
         let savedPos = null;

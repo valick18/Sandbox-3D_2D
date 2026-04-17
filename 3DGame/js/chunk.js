@@ -387,7 +387,21 @@ export class Chunk {
 
                     if (y > surfaceY) {
                         this.data[idx] = y <= WATER_LEVEL ? BLOCKS.WATER : BLOCKS.AIR;
+                        if (y === surfaceY + 1 && y > WATER_LEVEL && !isVillageBlock) {
+                            let temp = fbm2D(wx * 0.004 + 100, wz * 0.004 + 100);
+                            let moist = fbm2D(wx * 0.004 - 100, wz * 0.004 - 100);
+                            let isMountain = surfaceY > 75;
+                            let isDesert   = surfaceY > WATER_LEVEL && temp > 0.6 && moist < 0.5;
+                            let isSnowBiome = surfaceY > 80 + fbm2D(wx * 0.1, wz * 0.1) * 4;
+                            if (isSnowBiome) {
+                                this.data[idx] = BLOCKS.SNOW_LAYER;
+                            }
+                        }
                     } else if (y === surfaceY) {
+                        let temp = fbm2D(wx * 0.004 + 100, wz * 0.004 + 100);
+                        let moist = fbm2D(wx * 0.004 - 100, wz * 0.004 - 100);
+                        let isMountain = surfaceY > 75;
+                        let isDesert   = surfaceY > WATER_LEVEL && temp > 0.6 && moist < 0.5;
                         if (isDesert || (surfaceY <= WATER_LEVEL + 2 && !isMountain)) {
                             this.data[idx] = BLOCKS.SAND;
                         } else if (isMountain) {
@@ -466,6 +480,20 @@ export class Chunk {
                                 if (type > 0.8) block = BLOCKS.FLOWER_RED;
                                 else if (type > 0.6) block = BLOCKS.FLOWER_YELLOW;
                                 this.data[this.getIndex(x, surfaceY + 1, z)] = block;
+                            }
+                        }
+
+                        // --- RARE WILD CROP SPAWNING (grass/dirt surface only, very low rate) ---
+                        if (this.data[this.getIndex(x, surfaceY, z)] === BLOCKS.GRASS && surfaceY < CHUNK_HEIGHT - 1) {
+                            // Use deterministic hash so it's identical across chunk rebuilds
+                            let h1 = Math.sin(wx * 17.3 + wz * 41.7) * 43758.5453; h1 -= Math.floor(h1);
+                            let h2 = Math.sin(wx * 83.1 + wz * 11.9) * 43758.5453; h2 -= Math.floor(h2);
+                            // ~1.5% chance on qualifying spots (very rare singles)
+                            let isWildCropSpot = (wx % 31 === 0 && wz % 29 === 0) || (wx % 37 === 0 && wz % 41 === 0) || (wx % 53 === 0 && wz % 23 === 0);
+                            if (isWildCropSpot && h1 < 0.5) {
+                                const CROP_IDS = [BLOCKS.WHEAT, BLOCKS.OATS, BLOCKS.TOMATO, BLOCKS.CARROT, BLOCKS.POTATO];
+                                let cropType = CROP_IDS[Math.floor(h2 * CROP_IDS.length)];
+                                this.data[this.getIndex(x, surfaceY + 1, z)] = cropType;
                             }
                         }
                     }
@@ -622,9 +650,17 @@ export class Chunk {
                         else if (nBlock === BLOCKS.LEAVES && blockId !== BLOCKS.LEAVES) shouldRender = true;
                         else if (nBlock === BLOCKS.WATER && blockId !== BLOCKS.WATER) shouldRender = true;
                         else if (nBlock === BLOCKS.CACTUS && blockId !== BLOCKS.CACTUS) shouldRender = true;
-                        else if (nBlock >= 13 && nBlock <= 15) shouldRender = true; 
+                        // Flora: flowers, tall grass, AND all crops (23-27)
+                        else if (nBlock >= 13 && nBlock <= 15) shouldRender = true;
+                        else if (nBlock >= 23 && nBlock <= 27) shouldRender = true;
                         else if (nBlock === BLOCKS.GLASS && blockId !== BLOCKS.GLASS) shouldRender = true;
+                        else if (nBlock === BLOCKS.SNOW_LAYER && blockId !== BLOCKS.SNOW_LAYER) shouldRender = true;
                         
+                        // Force render for custom geometry blocks on index 0 to ensure they get built
+                        if (index === 0 && (blockId === BLOCKS.SNOW_LAYER || (blockId >= 13 && blockId <= 15) || (blockId >= 23 && blockId <= 27))) {
+                            shouldRender = true;
+                        }
+
                         if (shouldRender) {
                             
                             // Determine material index. If Grass Top (index 2) -> GRASS MAT. If Grass Side -> GRASS SIDE
@@ -662,7 +698,8 @@ export class Chunk {
                                      const h = 0.125; // 2 pixels high
                                      
                                      let startV = mf.pos.length / 3;
-                                     const top = [[0,h,0],[1,h,0],[1,h,1],[0,h,1]];
+                                     // Fix: Top face must be counter-clockwise (CCW) so normal points +Y
+                                     const top = [[0,h,1],[1,h,1],[1,h,0],[0,h,0]];
                                      for(let p of top) { 
                                          mf.pos.push(x + p[0], y + p[1], z + p[2]); 
                                          mf.norm.push(0, 1, 0); 
@@ -688,7 +725,7 @@ export class Chunk {
                                      }
                                 }
                             } else if (blockId >= 13 && blockId <= 15) {
-                                // Cross-Quad for Flora (Flowers, Grass)
+                                // Cross-Quad for Flora (Flowers, Grass) — originals
                                 if (index === 0) {
                                     if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
                                     let mf = solidFaces[matId];
@@ -705,6 +742,52 @@ export class Chunk {
                                             mf.norm.push(0, 1, 0);
                                             mf.uv.push(uvSeq[cv][0], uvSeq[cv][1]);
                                             cv++;
+                                        }
+                                        mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
+                                    }
+                                }
+                            } else if (blockId >= 23 && blockId <= 27) {
+                                // Cross-Quad for Crops (Wheat, Oats, Tomato, Carrot, Potato)
+                                // Scale height based on growth stage: 0=seedling(30%), 1=young(55%), 2=mature(100%)
+                                if (index === 0) {
+                                    if(!solidFaces[matId]) solidFaces[matId] = { pos: [], norm: [], uv: [], idx: [] };
+                                    let mf = solidFaces[matId];
+
+                                    // Look up growth stage for this world block
+                                    let wbx = this.chunkX * CHUNK_SIZE + x;
+                                    let wby = y;
+                                    let wbz = this.chunkZ * CHUNK_SIZE + z;
+                                    let cropKey = `${wbx},${wby},${wbz}`;
+                                    let growEntry = window.cropGrowth && window.cropGrowth[cropKey];
+                                    // stage: 0=seedling, 1=young, 2=mature (no entry = mature wild crop)
+                                    let stage = growEntry ? (growEntry.stage || 0) : 2;
+                                    // Calculate UVs so bottom vertices map to bottom of texture (v=0.0)
+                                    // and top vertices map to h (v=h)
+                                    let h = stage === 0 ? 0.30 : (stage === 1 ? 0.55 : 1.0);
+                                    let uvBot = 0.0;
+                                    let uvTop = h;
+
+                                    // Two diagonal planes forming an X cross
+                                    const plantPlanes = [
+                                        [{x:0,z:0},{x:1,z:1},{x:1,z:1},{x:0,z:0}], // plane A
+                                        [{x:0,z:1},{x:1,z:0},{x:1,z:0},{x:0,z:1}], // plane B
+                                    ];
+                                    const uvSeqs = [
+                                        [[0, uvBot],[1, uvBot],[1, uvTop],[0, uvTop]],
+                                        [[0, uvBot],[1, uvBot],[1, uvTop],[0, uvTop]],
+                                    ];
+                                    for (let pi = 0; pi < 2; pi++) {
+                                        const corners4 = [
+                                            [plantPlanes[pi][0].x, 0,   plantPlanes[pi][0].z],
+                                            [plantPlanes[pi][1].x, 0,   plantPlanes[pi][1].z],
+                                            [plantPlanes[pi][2].x, h,   plantPlanes[pi][2].z],
+                                            [plantPlanes[pi][3].x, h,   plantPlanes[pi][3].z],
+                                        ];
+                                        let startV = mf.pos.length / 3;
+                                        for (let ci = 0; ci < 4; ci++) {
+                                            mf.pos.push(x + corners4[ci][0], y + corners4[ci][1], z + corners4[ci][2]);
+                                            mf.norm.push(0, 1, 0);
+                                            mf.uv.push(uvSeqs[pi][ci][0], uvSeqs[pi][ci][1]);
                                         }
                                         mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
                                     }
