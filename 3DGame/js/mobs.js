@@ -56,6 +56,46 @@ function buildRabbit() {
     return root;
 }
 
+function buildSnake() {
+    let root = new THREE.Group();
+    root.userData = { isMob: true };
+    const bodyColor = 0x556b2f; // dark olive green
+    
+    // Head
+    root.add(makePart(0.15, 0.12, 0.20, bodyColor, 0, 0.06, 0.45));
+    // Body segments (so it looks long)
+    root.add(makePart(0.12, 0.10, 0.80, bodyColor, 0, 0.05, 0));
+    // Eyes
+    root.add(makePart(0.04, 0.04, 0.04, 0x111111, -0.06, 0.10, 0.52));
+    root.add(makePart(0.04, 0.04, 0.04, 0x111111,  0.06, 0.10, 0.52));
+    
+    // Optional: a tongue
+    root.add(makePart(0.02, 0.02, 0.06, 0xff0000, 0, 0.05, 0.58));
+    
+    return root;
+}
+
+function buildFish() {
+    let root = new THREE.Group();
+    root.userData = { isMob: true };
+    const bodyColor = Math.random() > 0.5 ? 0x1e90ff : 0xff8c00; // Blue or Orange
+    const finColor = 0x888888;
+    
+    // Body
+    root.add(makePart(0.10, 0.25, 0.40, bodyColor, 0, 0, 0));
+    // Tail
+    let tail = makePart(0.02, 0.20, 0.15, finColor, 0, 0, -0.25);
+    root.add(tail);
+    // Dorsal fin
+    root.add(makePart(0.02, 0.10, 0.20, finColor, 0, 0.16, 0));
+    // Eyes
+    root.add(makePart(0.03, 0.03, 0.03, 0x111111, -0.05, 0.05, 0.15));
+    root.add(makePart(0.03, 0.03, 0.03, 0x111111,  0.05, 0.05, 0.15));
+    
+    root.userData.tail = tail;
+    return root;
+}
+
 function buildVillager(shirtColor = 0x40e0d0, isFemale = false) {
     let root = new THREE.Group();
     root.userData = { isMob: true };
@@ -169,10 +209,14 @@ export class Mob {
         this.isDeer = type === 'deer';
         this.isBird = ['crow', 'cormorant', 'sparrow'].includes(type);
         this.isVillager = type === 'villager';
+        this.isSnake = type === 'snake';
+        this.isFish = type === 'fish';
         this.health = 5;
 
         if (this.isBird) { this.group = buildBird(this.type); }
         else if (this.isDeer) { this.group = buildDeer(); }
+        else if (this.isSnake) { this.group = buildSnake(); }
+        else if (this.isFish) { this.group = buildFish(); }
         else if (this.isVillager) {
             const h = Math.abs(Math.sin(spawnX * 0.77 + spawnZ * 1.31) * 1000) % 1;
             this.isFemale = forcedGender !== undefined ? (forcedGender === 1) : (h < 0.5);
@@ -264,6 +308,27 @@ export class Mob {
                 // Planing: glide down smoothly instead of falling
                 let targetDescent = -1.2;
                 this.velocity.y += (targetDescent - this.velocity.y) * delta * 1.5;
+            }
+        } else if (this.isFish) {
+            if (inWater) {
+                let surface = window.getSurfaceY ? window.getSurfaceY(pos.x, pos.z) : 0;
+                let targetY = surface + 2 + Math.sin(performance.now() * 0.002 + pos.x) * 1.5;
+                if (targetY > 57) targetY = 57;
+                this.velocity.y += (targetY - pos.y) * delta * 2;
+                
+                if (this.isMoving) {
+                    this.velocity.x += this.targetDir.x * 5 * delta;
+                    this.velocity.z += this.targetDir.z * 5 * delta;
+                }
+                this.velocity.x *= 0.92; this.velocity.z *= 0.92;
+            } else {
+                this.velocity.y -= 25 * delta;
+                if (this.onGround && this.hopTimer <= 0) { 
+                    this.velocity.y = 5; 
+                    this.targetDir.set(Math.random()-0.5, 0, Math.random()-0.5).normalize();
+                    this.isMoving = true;
+                    this.hopTimer = 0.5; 
+                }
             }
         } else {
             if (inWater) {
@@ -368,12 +433,14 @@ export class Mob {
             }
         }
 
-        if(!this.isDeer && !this.isBird && !this.isVillager && this.isMoving) {
+        if(!this.isDeer && !this.isBird && !this.isVillager && !this.isSnake && !this.isFish && this.isMoving) {
             this.hopTimer -= delta;
             if(this.onGround && this.hopTimer <= 0) { this.velocity.y = 6.5; this.hopTimer = 0.5; }
         }
 
         let speed = this.isVillager ? 3.0 : (this.isDeer ? 4.5 : 2.5);
+        if (this.isSnake) speed = 1.8;
+        if (this.isFish) speed = 2.0;
         if (this.isBird) {
             if (this.birdState === 'sitting') speed = this.isMoving ? 1.5 : 0;
             else speed = (this.group.userData.birdType === 'sparrow' ? 4.5 : 3.0);
@@ -452,6 +519,16 @@ export class Mob {
                  let swing = Math.sin(this.legPhase) * 0.45;
                  legs.fl.rotation.x = swing; legs.br.rotation.x = swing;
                  legs.fr.rotation.x = -swing; legs.bl.rotation.x = -swing;
+             }
+        } else if (this.isSnake) {
+             if (this.isMoving) {
+                 let wiggle = Math.sin(performance.now() * 0.015) * 0.3;
+                 this.group.children[1].rotation.y = wiggle; // wag body
+             }
+        } else if (this.isFish) {
+             if (this.isMoving) {
+                 let swim = Math.sin(performance.now() * 0.02) * 0.5;
+                 if (this.group.userData.tail) this.group.userData.tail.rotation.y = swim;
              }
         }
     }

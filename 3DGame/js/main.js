@@ -1878,15 +1878,24 @@ function spawnOneMobInChunk(cx, cz) {
     let wz = cz * 16 + z;
     let wy = getSurfaceY(wx, wz);
 
-    const pool = ['rabbit', 'deer', 'deer', 'deer', 'crow', 'crow', 'sparrow', 'sparrow', 'cormorant'];
-    let type = pool[Math.floor(Math.random() * pool.length)];
+    let isWater = getBlockGlobal(wx, wy, wz) === BLOCKS.WATER;
+    
+    const landPool = ['rabbit', 'deer', 'deer', 'deer', 'crow', 'crow', 'sparrow', 'sparrow', 'cormorant', 'snake', 'snake'];
+    const waterPool = ['fish', 'fish', 'fish', 'cormorant'];
+    
+    let type = isWater ? waterPool[Math.floor(Math.random() * waterPool.length)] : landPool[Math.floor(Math.random() * landPool.length)];
     
     let mob = new Mob(scene, getBlockGlobal, type, wx, wz);
     
     if (mob.isBird) {
-        mob.group.position.set(wx + 0.5, wy + 25 + Math.random() * 10, wz + 0.5);
+        let skyY = Math.max(wy, 65) + 25 + Math.random() * 10;
+        mob.group.position.set(wx + 0.5, skyY, wz + 0.5);
+    } else if (mob.isFish) {
+        let waterDepth = 58 - wy;
+        let yPos = waterDepth > 0 ? wy + 1 + Math.random() * (waterDepth - 1) : wy;
+        mob.group.position.set(wx + 0.5, yPos, wz + 0.5);
     } else {
-        let offset = type === 'deer' ? 0.8 : 0.5;
+        let offset = type === 'deer' ? 0.8 : (type === 'snake' ? 0.1 : 0.5);
         mob.group.position.set(wx + 0.5, wy + offset, wz + 0.5);
     }
 }
