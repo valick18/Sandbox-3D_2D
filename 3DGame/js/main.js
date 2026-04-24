@@ -1926,7 +1926,13 @@ function checkAABB(px, py, pz) {
                 // NOTE: TILLED_SOIL has full collision so player doesn't fall through
                 if (blockId !== BLOCKS.AIR && blockId !== BLOCKS.WATER
                     && !(blockId >= 13 && blockId <= 15)
-                    && !(blockId >= 23 && blockId <= 27)) return true;
+                    && !(blockId >= 23 && blockId <= 27)) {
+                    if (blockId === BLOCKS.SNOW_LAYER) {
+                        if (minY < y + 0.125) return true;
+                    } else {
+                        return true;
+                    }
+                }
             }
         }
     }

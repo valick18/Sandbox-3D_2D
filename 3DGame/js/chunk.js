@@ -774,6 +774,16 @@ export class Chunk {
                                          mf.uv.push(0,1, 1,1, 1,0, 0,0); 
                                          mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
                                      }
+
+                                     // Bottom face
+                                     startV = mf.pos.length / 3;
+                                     const bottom = [[0,0,0],[1,0,0],[1,0,1],[0,0,1]];
+                                     for(let p of bottom) {
+                                         mf.pos.push(x + p[0], y + p[1], z + p[2]);
+                                         mf.norm.push(0, -1, 0);
+                                     }
+                                     mf.uv.push(0,1, 1,1, 1,0, 0,0);
+                                     mf.idx.push(startV, startV+1, startV+2, startV, startV+2, startV+3);
                                 }
                             } else if (blockId >= 13 && blockId <= 15) {
                                 // Cross-Quad for Flora (Flowers, Grass) — originals
