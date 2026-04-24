@@ -232,9 +232,10 @@ export class Chunk {
         
         let isOcean    = surfaceY <= WATER_LEVEL - 4;
         let isMountain = surfaceY > 75;
-        let isDesert   = !isOcean && !isMountain && temp > 0.6 && moist < 0.5;
+        let isDesert   = !isMountain && temp > 0.6 && moist < 0.5;
         let isSand     = isDesert || (surfaceY <= WATER_LEVEL + 2 && !isMountain); // beach sand
-        if (surfaceY < WATER_LEVEL || isOcean || isMountain || isSand) return null;
+        
+        if (surfaceY < WATER_LEVEL || isOcean) return null; // no trees underwater
 
         let cellX = Math.floor(wx / TREE_GRID);
         let cellZ = Math.floor(wz / TREE_GRID);
@@ -246,9 +247,39 @@ export class Chunk {
 
         let cellProb = Math.sin(cellX * 73.47 + cellZ * 512.91) * 43758.5453;
         cellProb -= Math.floor(cellProb);
-        if (cellProb >= 0.65) return null;
 
-        return { surfaceY, treeHeight: 4 + Math.floor(h2 * 3) };
+        let woodId = BLOCKS.WOOD, leavesId = BLOCKS.LEAVES;
+        let treeHeight = 4 + Math.floor(h2 * 3);
+        let type = 'tree';
+
+        if (isDesert && !isSand) {
+            // true desert, cacti mostly
+            if (cellProb < 0.3) {
+                return { type: 'cactus', surfaceY, treeHeight: 2 + Math.floor(h1 * 3) };
+            }
+            return null;
+        }
+
+        // Tree distributions
+        if (isSand) {
+            if (cellProb >= 0.15) return null; // sparse palms
+            woodId = BLOCKS.PALM_WOOD; leavesId = BLOCKS.PALM_LEAVES; treeHeight += 2; type = 'palm';
+        } else if (isMountain || temp < 0.35) {
+            if (cellProb >= 0.5) return null; // sparse pines
+            woodId = BLOCKS.PINE_WOOD; leavesId = BLOCKS.PINE_LEAVES; treeHeight += 3; type = 'pine';
+        } else if (temp > 0.6 && moist >= 0.5) {
+            if (cellProb >= 0.85) return null; // Dense jungle
+            woodId = BLOCKS.JUNGLE_WOOD; leavesId = BLOCKS.JUNGLE_LEAVES; treeHeight += 6; type = 'jungle';
+        } else {
+            if (cellProb >= 0.65) return null; // generic forest
+            if (h1 < 0.2) {
+                woodId = BLOCKS.BIRCH_WOOD; leavesId = BLOCKS.BIRCH_LEAVES; type = 'birch';
+            } else if (h1 < 0.35) {
+                leavesId = BLOCKS.APPLE_LEAVES; type = 'apple';
+            }
+        }
+
+        return { type, surfaceY, treeHeight, woodId, leavesId };
     }
 
     generateData() {
@@ -447,26 +478,25 @@ export class Chunk {
                     let cellX = Math.floor(wx / TREE_GRID);
                     let cellZ = Math.floor(wz / TREE_GRID);
                     let h1 = Math.sin(cellX * 127.1 + cellZ * 311.7) * 43758.5453; h1 -= Math.floor(h1);
-                    let h2 = Math.sin(cellX * 269.5 + cellZ * 183.3) * 43758.5453; h2 -= Math.floor(h2);
                     let candWX = cellX * TREE_GRID + Math.floor(h1 * TREE_GRID);
+                    let h2 = Math.sin(cellX * 269.5 + cellZ * 183.3) * 43758.5453; h2 -= Math.floor(h2);
                     let candWZ = cellZ * TREE_GRID + Math.floor(h2 * TREE_GRID);
-                    let cellProb = Math.sin(cellX * 73.47 + cellZ * 512.91) * 43758.5453;
-                    cellProb -= Math.floor(cellProb);
 
                     if (wx === candWX && wz === candWZ) {
-                        if (isDesert && cellProb < 0.3) {
-                            // Cactus
-                            let cH = 2 + Math.floor(h1 * 3);
-                            for (let ty = 1; ty <= cH; ty++) {
-                                if (surfaceY + ty < CHUNK_HEIGHT)
-                                    this.data[this.getIndex(x, surfaceY + ty, z)] = BLOCKS.CACTUS;
-                            }
-                        } else if (!isDesert && !isOcean && !isMountain && surfaceY > WATER_LEVEL + 2 && cellProb < 0.65) {
-                            // Tree trunk only (not on sand/beach)
-                            let treeHeight = 4 + Math.floor(h2 * 3);
-                            for (let ty = 1; ty <= treeHeight; ty++) {
-                                if (surfaceY + ty < CHUNK_HEIGHT)
-                                    this.data[this.getIndex(x, surfaceY + ty, z)] = BLOCKS.WOOD;
+                        let info = this.getTreeInfoAtWorld(wx, wz);
+                        if (info) {
+                            if (info.type === 'cactus') {
+                                for (let ty = 1; ty <= info.treeHeight; ty++) {
+                                    if (surfaceY + ty < CHUNK_HEIGHT) this.data[this.getIndex(x, surfaceY + ty, z)] = BLOCKS.CACTUS;
+                                }
+                            } else {
+                                // It's a trunk for a tree
+                                if (this.data[this.getIndex(x, surfaceY, z)] === BLOCKS.STONE) {
+                                    this.data[this.getIndex(x, surfaceY, z)] = BLOCKS.DIRT;
+                                }
+                                for (let ty = 1; ty <= info.treeHeight; ty++) {
+                                    if (surfaceY + ty < CHUNK_HEIGHT) this.data[this.getIndex(x, surfaceY + ty, z)] = info.woodId;
+                                }
                             }
                         }
                     } else {
@@ -546,14 +576,35 @@ export class Chunk {
                         let trunkTop = info.surfaceY + info.treeHeight;
 
                         // Place leaves for layers that cover this (dx, dz) offset
-                        for (const layer of treeLayers) {
+                        // Modify pine layers to be conical
+                        let isPine = info.type === 'pine';
+                        let isPalm = info.type === 'palm';
+                        
+                        let currentLayers = treeLayers;
+                        if (isPine) {
+                            currentLayers = [
+                                { dy: -4, r: 2, sk: true },
+                                { dy: -3, r: 1, sk: false },
+                                { dy: -2, r: 2, sk: true },
+                                { dy: -1, r: 1, sk: false },
+                                { dy:  0, r: 1, sk: true },
+                                { dy: +1, r: 0, sk: false } // peak
+                            ];
+                        } else if (isPalm) {
+                            currentLayers = [
+                                { dy:  0, r: 2, sk: true }, // fronds
+                                { dy: +1, r: 1, sk: false } // top tuft
+                            ];
+                        }
+
+                        for (const layer of currentLayers) {
                             if (Math.abs(dx) > layer.r || Math.abs(dz) > layer.r) continue;
                             if (layer.sk && Math.abs(dx) === layer.r && Math.abs(dz) === layer.r) continue;
                             let leafY = trunkTop + layer.dy;
                             if (leafY < 0 || leafY >= CHUNK_HEIGHT) continue;
                             let existing = this.data[this.getIndex(x, leafY, z)];
-                            if (existing === BLOCKS.AIR || existing === BLOCKS.LEAVES) {
-                                this.data[this.getIndex(x, leafY, z)] = BLOCKS.LEAVES;
+                            if (existing === BLOCKS.AIR || (existing >= 31 && existing <= 39) || existing === BLOCKS.LEAVES) {
+                                this.data[this.getIndex(x, leafY, z)] = info.leavesId;
                             }
                         }
                     }

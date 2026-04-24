@@ -34,7 +34,16 @@ export const BLOCKS = {
     WHEAT_SEED: 28,
     OATS_SEED: 29,
     TOMATO_SEED: 30,
-    // Carrot & Potato use their own ID as seed (same item)
+    // New Trees
+    APPLE_LEAVES: 31,
+    BIRCH_WOOD: 32,
+    BIRCH_LEAVES: 33,
+    PINE_WOOD: 34,
+    PINE_LEAVES: 35,
+    JUNGLE_WOOD: 36,
+    JUNGLE_LEAVES: 37,
+    PALM_WOOD: 38,
+    PALM_LEAVES: 39,
     // Tools
     HOE: 50
 };
@@ -59,7 +68,16 @@ const BASE_COLORS = {
     [BLOCKS.GLASS]: [200, 240, 255],
     [BLOCKS.FURNACE]: [80, 80, 80],
     [BLOCKS.TILLED_SOIL]: [80, 45, 18],
-    [BLOCKS.SNOW_LAYER]: [245, 250, 255]
+    [BLOCKS.SNOW_LAYER]: [245, 250, 255],
+    [BLOCKS.APPLE_LEAVES]: [50, 160, 40], // vibrant green
+    [BLOCKS.BIRCH_WOOD]: [225, 225, 220], // white bark
+    [BLOCKS.BIRCH_LEAVES]: [100, 160, 60], // lighter yellowish green
+    [BLOCKS.PINE_WOOD]: [60, 40, 20], // dark brown
+    [BLOCKS.PINE_LEAVES]: [30, 80, 40], // dark evergreen
+    [BLOCKS.JUNGLE_WOOD]: [130, 80, 40], // saturated cocoa brown
+    [BLOCKS.JUNGLE_LEAVES]: [40, 150, 30], // vivid jungle green
+    [BLOCKS.PALM_WOOD]: [160, 140, 100], // sandy tan
+    [BLOCKS.PALM_LEAVES]: [60, 170, 50] // bright tropical green
 };
 
 const size = 64; // HD Textures
@@ -156,68 +174,67 @@ export function generateMaterials() {
         return [c[0] - shade + vary, c[1] - shade + vary, c[2] - shade + vary];
     });
 
-    // Wood - Tree Rings (side view)
-    materials[BLOCKS.WOOD] = createCanvasTex(BLOCKS.WOOD, (x, y) => {
+    // Wood Generator Helper
+    const createWoodTex = (id) => createCanvasTex(id, (x, y) => {
         let vary = (Math.random() - 0.5) * 15;
         let nx = (x / 64) * Math.PI * 2;
         let ny = (y / 64) * Math.PI * 2;
         let grain = Math.sin(nx * 3 + Math.sin(ny * 1) * 2) * 25;
         if (Math.sin(nx * 8) > 0.9) vary -= 40;
-        let c = BASE_COLORS[BLOCKS.WOOD];
+        // Birch wood looks different: horizontal stripes
+        if (id === BLOCKS.BIRCH_WOOD) {
+            grain = Math.sin(ny * 10) * 10;
+            if (Math.sin(ny * 4) > 0.8 && Math.sin(nx * 5) > 0.5) vary -= 60; // black marks
+        }
+        let c = BASE_COLORS[id];
         return [c[0] + grain + vary, c[1] + grain + vary, c[2] + grain + vary];
     });
 
-    // Leaves - Minecraft-style: tiny leaf shapes on dark green bg
-    let leafMat = createCanvasTex(BLOCKS.LEAVES, (x, y) => {
-        // Small 4px cells — each cell randomly filled or empty
-        const cell = 4;
-        let cx = Math.floor(x / cell);
-        let cy = Math.floor(y / cell);
-        let lx = x % cell;
-        let ly = y % cell;
+    // Leaves Generator Helper
+    const createLeafTex = (id) => {
+        let mat = createCanvasTex(id, (x, y) => {
+            const cell = id === BLOCKS.PINE_LEAVES ? 3 : 4; // Pine has finer needles
+            let cx = Math.floor(x / cell), cy = Math.floor(y / cell);
+            let lx = x % cell, ly = y % cell;
+            const h = (a, b) => { let v = Math.sin(a * 57.3 + b * 231.7 + 3.1) * 85432.131; return v - Math.floor(v); };
+            let hv = h(cx, cy), hv2 = h(cx * 2.1 + 0.7, cy * 1.9 + 0.3);
+            let isLeaf = hv > 0.30, isBorder = (lx === 0 || ly === (id===BLOCKS.PINE_LEAVES?0:ly));
+            let c = BASE_COLORS[id];
+            let r, g, b;
+            if (isLeaf && !isBorder) {
+                let bright = Math.floor(hv2 * 40);
+                r = c[0] + bright; g = c[1] + bright + Math.floor(hv * 30); b = c[2] + Math.floor(hv2 * 10);
+            } else if (isLeaf && isBorder) {
+                r = c[0] * 0.55; g = c[1] * 0.6; b = c[2] * 0.5;
+            } else {
+                r = c[0] * 0.35; g = c[1] * 0.4; b = c[2] * 0.35;
+            }
+            
+            // Apples explicitly for APPLE_LEAVES
+            if (id === BLOCKS.APPLE_LEAVES && h(cx*3, cy*3) > 0.96) {
+                if(lx > 0 && ly > 0 && lx < 3 && ly < 3) return [220, 40, 40, 255]; // Red apples
+            }
 
-        // Deterministic hash per cell
-        const h = (a, b) => {
-            let v = Math.sin(a * 57.3 + b * 231.7 + 3.1) * 85432.131;
-            return v - Math.floor(v);
-        };
-        let hv = h(cx, cy);
+            let noise = Math.floor((Math.sin(x * 13.7 + y * 9.3) * 0.5 + 0.5) * 14) - 7;
+            return [Math.max(0, Math.min(255, r + noise)), Math.max(0, Math.min(255, g + noise)), Math.max(0, Math.min(255, b + noise)), 255];
+        });
+        mat.transparent = false;
+        mat.alphaTest = 0;
+        return mat;
+    };
 
-        // Sub-cell for inner highlight variation
-        const hv2 = h(cx * 2.1 + 0.7, cy * 1.9 + 0.3);
+    materials[BLOCKS.WOOD] = createWoodTex(BLOCKS.WOOD);
+    materials[BLOCKS.BIRCH_WOOD] = createWoodTex(BLOCKS.BIRCH_WOOD);
+    materials[BLOCKS.PINE_WOOD] = createWoodTex(BLOCKS.PINE_WOOD);
+    materials[BLOCKS.JUNGLE_WOOD] = createWoodTex(BLOCKS.JUNGLE_WOOD);
+    materials[BLOCKS.PALM_WOOD] = createWoodTex(BLOCKS.PALM_WOOD);
 
-        // ~70% of cells are bright leaf patches
-        let isLeaf = hv > 0.30;
-        // 1-pixel border between cells (dark outline)
-        let isBorder = (lx === 0 || ly === 0);
-
-        let r, g, b;
-
-        if (isLeaf && !isBorder) {
-            // Leaf surface: range from mid-green to bright green
-            let bright = Math.floor(hv2 * 40);
-            r = 38 + bright;
-            g = 110 + bright + Math.floor(hv * 30);
-            b = 28 + Math.floor(hv2 * 10);
-        } else if (isLeaf && isBorder) {
-            // Leaf edge: darker
-            r = 22; g = 75; b = 20;
-        } else {
-            // Gap between leaves: very dark green
-            r = 14; g = 50; b = 14;
-        }
-
-        // High-frequency pixel noise for texture depth (like MC dithering)
-        let noise = Math.floor((Math.sin(x * 13.7 + y * 9.3) * 0.5 + 0.5) * 14) - 7;
-        r = Math.max(0, Math.min(255, r + noise));
-        g = Math.max(0, Math.min(255, g + noise));
-        b = Math.max(0, Math.min(255, b + noise));
-
-        return [r, g, b, 255];
-    });
-    leafMat.transparent = false;
-    leafMat.alphaTest = 0;
-    materials[BLOCKS.LEAVES] = leafMat;
+    materials[BLOCKS.LEAVES] = createLeafTex(BLOCKS.LEAVES);
+    materials[BLOCKS.APPLE_LEAVES] = createLeafTex(BLOCKS.APPLE_LEAVES);
+    materials[BLOCKS.BIRCH_LEAVES] = createLeafTex(BLOCKS.BIRCH_LEAVES);
+    materials[BLOCKS.PINE_LEAVES] = createLeafTex(BLOCKS.PINE_LEAVES);
+    materials[BLOCKS.JUNGLE_LEAVES] = createLeafTex(BLOCKS.JUNGLE_LEAVES);
+    materials[BLOCKS.PALM_LEAVES] = createLeafTex(BLOCKS.PALM_LEAVES);
 
     // Sand - very fine subtle noise
     materials[BLOCKS.SAND] = createCanvasTex(BLOCKS.SAND, (x, y) => {

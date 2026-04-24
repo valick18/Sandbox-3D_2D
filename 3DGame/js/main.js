@@ -39,6 +39,8 @@ const BLOCK_NAMES = {
     22:'Tilled Soil',
     23:'Wheat', 24:'Oats', 25:'Tomato', 26:'Carrot', 27:'Potato',
     28:'Wheat Seeds', 29:'Oat Seeds', 30:'Tomato Seeds',
+    31:'Apple Leaves', 32:'Birch Wood', 33:'Birch Leaves', 34:'Pine Wood', 35:'Pine Leaves',
+    36:'Jungle Wood', 37:'Jungle Leaves', 38:'Palm Wood', 39:'Palm Leaves',
     50:'Hoe'
 };
 
