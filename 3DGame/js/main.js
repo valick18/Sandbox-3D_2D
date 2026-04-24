@@ -2520,16 +2520,26 @@ function animate() {
         // Simple sweep X/Z with auto-step for snow/slabs
         if (!checkAABB(camera.position.x + dx, camera.position.y, camera.position.z)) {
             camera.position.x += dx;
-        } else if (!checkAABB(camera.position.x + dx, camera.position.y + 0.55, camera.position.z)) {
-            camera.position.x += dx;
-            camera.position.y += 0.55;
+        } else {
+            for (let s = 0.05; s <= 0.56; s += 0.05) {
+                if (!checkAABB(camera.position.x + dx, camera.position.y + s, camera.position.z)) {
+                    camera.position.x += dx;
+                    camera.position.y += s;
+                    break;
+                }
+            }
         }
 
         if (!checkAABB(camera.position.x, camera.position.y, camera.position.z + dz)) {
             camera.position.z += dz;
-        } else if (!checkAABB(camera.position.x, camera.position.y + 0.55, camera.position.z + dz)) {
-            camera.position.z += dz;
-            camera.position.y += 0.55;
+        } else {
+            for (let s = 0.05; s <= 0.56; s += 0.05) {
+                if (!checkAABB(camera.position.x, camera.position.y + s, camera.position.z + dz)) {
+                    camera.position.z += dz;
+                    camera.position.y += s;
+                    break;
+                }
+            }
         }
 
         // Footsteps
