@@ -311,8 +311,9 @@ export class Mob {
             }
         } else if (this.isFish) {
             if (inWater) {
-                let surface = window.getSurfaceY ? window.getSurfaceY(pos.x, pos.z) : 0;
-                let targetY = surface + 2 + Math.sin(performance.now() * 0.002 + pos.x) * 1.5;
+                let targetY = 55 + Math.sin(performance.now() * 0.001 + pos.x) * 2;
+                let floorY = window.getSurfaceY ? window.getSurfaceY(pos.x, pos.z) : 0;
+                if (targetY < floorY + 1) targetY = floorY + 1;
                 if (targetY > 57) targetY = 57;
                 this.velocity.y += (targetY - pos.y) * delta * 2;
                 
