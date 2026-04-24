@@ -1297,9 +1297,9 @@ function init() {
     function handleBlockBreak(tx, ty, tz, blockId) {
         if (blockId === BLOCKS.AIR || blockId === BLOCKS.WATER) return;
 
-        // Check if there's a plant above that needs to break first
+        // Check if there's a plant or snow layer above that needs to break first
         let aboveId = getBlockGlobal(tx, ty + 1, tz);
-        if ((aboveId >= 13 && aboveId <= 15) || (aboveId >= 23 && aboveId <= 27)) {
+        if ((aboveId >= 13 && aboveId <= 15) || (aboveId >= 23 && aboveId <= 27) || aboveId === BLOCKS.SNOW_LAYER) {
             handleBlockBreak(tx, ty + 1, tz, aboveId); // recurse
         }
 
@@ -2517,9 +2517,20 @@ function animate() {
             camera.position.y += dy;
         } else { if (dy < 0) canJump = true; velocity.y = 0; }
         
-        // Simple sweep X/Z
-        if (!checkAABB(camera.position.x + dx, camera.position.y, camera.position.z)) camera.position.x += dx;
-        if (!checkAABB(camera.position.x, camera.position.y, camera.position.z + dz)) camera.position.z += dz;
+        // Simple sweep X/Z with auto-step for snow/slabs
+        if (!checkAABB(camera.position.x + dx, camera.position.y, camera.position.z)) {
+            camera.position.x += dx;
+        } else if (!checkAABB(camera.position.x + dx, camera.position.y + 0.55, camera.position.z)) {
+            camera.position.x += dx;
+            camera.position.y += 0.55;
+        }
+
+        if (!checkAABB(camera.position.x, camera.position.y, camera.position.z + dz)) {
+            camera.position.z += dz;
+        } else if (!checkAABB(camera.position.x, camera.position.y + 0.55, camera.position.z + dz)) {
+            camera.position.z += dz;
+            camera.position.y += 0.55;
+        }
 
         // Footsteps
         const isMoving = moveForward || moveBackward || moveLeft || moveRight;
